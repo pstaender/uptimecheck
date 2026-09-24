@@ -10,13 +10,65 @@ function config(): array
 {
     static $config = null;
     if ($config === null) {
-        $file = getenv('UPTIMECHECK_CONFIG') ?: __DIR__ . '/config.php';
+        $file = config_file();
         if (!is_file($file)) {
             throw new RuntimeException("Config file not found: $file");
         }
         $config = require $file;
     }
     return $config;
+}
+
+/**
+ * The config file for the current hostname. The directory can be changed with
+ * the env var UPTIMECHECK_CONFIG_DIR (used by the tests).
+ */
+function config_file(): string
+{
+    static $file = null;
+    return $file ??= resolve_config_file(getenv('UPTIMECHECK_CONFIG_DIR') ?: __DIR__, current_hostname());
+}
+
+/**
+ * Returns <dir>/config.<hostname>.php if it exists, <dir>/config.php otherwise.
+ */
+function resolve_config_file(string $dir, ?string $hostname): string
+{
+    if ($hostname !== null && is_file($file = "$dir/config.$hostname.php")) {
+        return $file;
+    }
+    return "$dir/config.php";
+}
+
+/**
+ * The hostname of the request, or on the command line the value of --host=<hostname>.
+ */
+function current_hostname(): ?string
+{
+    if (PHP_SAPI !== 'cli') {
+        return normalize_hostname($_SERVER['HTTP_HOST'] ?? null);
+    }
+    foreach ($GLOBALS['argv'] ?? [] as $arg) {
+        if (str_starts_with($arg, '--host=')) {
+            return normalize_hostname(substr($arg, 7));
+        }
+    }
+    return null;
+}
+
+/**
+ * Lowercases the hostname and strips the port. Returns null for anything that is
+ * not a plain hostname, so it can safely be used in a file name.
+ */
+function normalize_hostname(?string $host): ?string
+{
+    if ($host === null) {
+        return null;
+    }
+    $host = strtolower(rtrim(preg_replace('/:\d+$/', '', $host), '.'));
+    $valid = preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/', $host);
+    // "example" would load config.example.php
+    return $valid && $host !== 'example' ? $host : null;
 }
 
 function db(): PDO

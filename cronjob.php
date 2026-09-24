@@ -51,6 +51,8 @@ if (!$pdo->query('SELECT pg_try_advisory_lock(' . LOCK_KEY . ')')->fetchColumn()
     exit(0);
 }
 
+out('Using config ' . config_file());
+
 $jobId = null;
 try {
     foreach (migrate($pdo) as $migration) {

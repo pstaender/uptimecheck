@@ -12,17 +12,29 @@ use CurlHandle;
 final class Browser
 {
     private CurlHandle $curl;
+    private string $baseUrl;
 
-    public function __construct(private string $baseUrl = '')
+    /**
+     * @param ?string $host value of the Host header, defaults to the address of the server
+     */
+    public function __construct(?string $host = null)
     {
-        $this->baseUrl = $baseUrl ?: Env::webUrl();
+        $this->baseUrl = Env::webUrl();
         $this->curl = curl_init();
         curl_setopt_array($this->curl, [
+            CURLOPT_HTTPHEADER => $host !== null ? ["Host: $host"] : [],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_COOKIEFILE => '', // in-memory cookie jar
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_TIMEOUT => 10,
         ]);
+    }
+
+    /** Sets the Host header for the following requests, the cookies are kept. */
+    public function host(?string $host): self
+    {
+        curl_setopt($this->curl, CURLOPT_HTTPHEADER, $host !== null ? ["Host: $host"] : []);
+        return $this;
     }
 
     /**

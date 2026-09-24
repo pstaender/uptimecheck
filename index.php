@@ -28,6 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($userOk && $passwordOk) {
                 session_regenerate_id(true);
                 $_SESSION['user'] = $auth['user'];
+                // a login is only valid for the config it was made with (see config.<hostname>.php)
+                $_SESSION['config'] = config_file();
                 header('Location: ' . url());
                 exit;
             }
@@ -106,7 +108,7 @@ function render_history(array $checks): string
     return '<span class="history">' . $html . '</span>';
 }
 
-$loggedIn = isset($_SESSION['user']);
+$loggedIn = isset($_SESSION['user']) && ($_SESSION['config'] ?? null) === config_file();
 $site = null;
 
 if ($loggedIn) {

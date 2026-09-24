@@ -2,3 +2,5 @@
 /config.php
 /vendor/
 /.phpunit.cache/
+/config.*.php
+!/config.example.php

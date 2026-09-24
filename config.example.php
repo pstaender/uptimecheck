@@ -1,6 +1,7 @@
 <?php
 
-// Copy to config.php and adjust.
+// Copy to config.php and adjust. For a config per hostname use config.<hostname>.php,
+// e.g. config.zeitpulse.com.php (the cronjob then needs --host=zeitpulse.com).
 return [
     "sites" => [
         // defaults: GET, status code 200, redirects are not followed

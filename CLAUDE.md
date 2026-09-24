@@ -8,7 +8,7 @@ Uptimecheck is a very simple php script for shared hosting sites.
 
 `schema.php` contains the database schema.
 
-`config.php` has the config (gitignored, see `config.example.php` for all options).
+`config.php` has the config (gitignored, see `config.example.php` for all options). A config per hostname is possible: `config.<hostname>.php` (e.g. `config.zeitpulse.com.php`, `config.www.zeitpulse.com.php`) is used when it exists, `config.php` otherwise. The web interface takes the hostname from the request, the cronjob from `--host=<hostname>`. A login is only valid for the config it was made with.
 
 `lib.php` contains shared helpers (config, db, migrations, site state) for `index.php` and `cronjob.php`.
 
@@ -62,7 +62,7 @@ When something in up and down sites has changed since the last notification, sen
 ## Development
 
 * `composer serve` starts the web interface on http://localhost:8000
-* `composer cron` runs the checks once (verbose), `composer test-mail` sends a test mail
+* `composer cron` runs the checks once (verbose), `composer test-mail` sends a test mail (both accept `-- --host=<hostname>`)
 * `composer hash-password -- 'your-password'` prints the hash for `auth.password`
 * `composer test` runs the pest tests in `tests/`. They need a local postgres (database `uptime_test` is created if missing, see `tests/Support/Env.php` for the `UPTIMECHECK_TEST_DB_*` env vars). The tests run `cronjob.php` and the web interface as real processes against a fixture http server (`tests/Support/router.php`) and a fake smtp server (`tests/Support/smtp_server.php`).
 

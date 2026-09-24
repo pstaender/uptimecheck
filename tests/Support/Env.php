@@ -35,17 +35,17 @@ final class Env
     {
         self::boot();
         self::db()->exec('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
-        foreach (glob(self::$dir . '/{state,mails}/*', GLOB_BRACE) as $file) {
+        foreach (glob(self::$dir . '/{state/*,mails/*,config.*.php}', GLOB_BRACE) as $file) {
             unlink($file);
         }
         self::config($config);
     }
 
     /**
-     * Writes the config used by cronjob.php and the web interface.
-     * Top level keys of $overrides replace the defaults.
+     * Writes the config used by cronjob.php and the web interface, config.php
+     * or with $hostname config.<hostname>.php. Top level keys of $overrides replace the defaults.
      */
-    public static function config(array $overrides = []): void
+    public static function config(array $overrides = [], ?string $hostname = null): void
     {
         self::$passwordHash ??= password_hash(self::PASSWORD, PASSWORD_DEFAULT);
         $config = array_replace([
@@ -60,7 +60,7 @@ final class Env
             'db' => self::dbConfig(),
             'auth' => ['user' => 'admin', 'password' => self::$passwordHash],
         ], $overrides);
-        file_put_contents(self::configFile(), '<?php return ' . var_export($config, true) . ';');
+        file_put_contents(self::configFile($hostname), '<?php return ' . var_export($config, true) . ';');
     }
 
     /** URL of a simulated site. */
@@ -218,12 +218,12 @@ final class Env
 
     private static function env(): array
     {
-        return getenv() + ['UPTIMECHECK_CONFIG' => self::configFile()];
+        return getenv() + ['UPTIMECHECK_CONFIG_DIR' => self::$dir];
     }
 
-    private static function configFile(): string
+    private static function configFile(?string $hostname = null): string
     {
-        return self::$dir . '/config.php';
+        return self::$dir . ($hostname === null ? '/config.php' : "/config.$hostname.php");
     }
 
     private static function dbConfig(): array
