@@ -55,15 +55,10 @@ Copy the output (starting with `$2y$`) into the `auth.password` field of your co
 
 return [
     "sites" => [
-        // Default settings
         "https://www.mysite.com/" => [],
-
-        // Follow redirects instead of treating them as the final response
         "https://myothersite.com/" => [
             "follow_redirects" => true,
         ],
-
-        // Custom method, headers and accepted status codes
         "https://myapi.net" => [
             "method" => "POST",
             "status_code" => [200],
@@ -73,11 +68,10 @@ return [
         ],
     ],
 
-    "tolerated_failures_in_a_row" => 1, // Failed checks allowed before a notification is sent
-    "timeout" => 5,                     // Request timeout in seconds
-    "max_response_time" => 0.5,         // Responses slower than this (seconds) count as failures
-    "retention_days" => 90,             // How long check results are kept
-
+    "tolerated_failures_in_a_row" => 1,
+    "timeout" => 5,
+    "max_response_time" => 0.5,
+    "retention_days" => 90,
     "email" => [
         "from" => "uptime@example.com",
         "to" => ["admin@example.com"],
@@ -99,7 +93,6 @@ return [
 
     "auth" => [
         "user" => "admin",
-        // Use single quotes! In double quotes, PHP treats "$..." as variables.
         "password" => '$2y$10$AnfHxXsCHiJmwa0S/Mt.vu.Zke7nBehC79PLoc8l/sm7nmxpYkczy',
     ],
 ];
