@@ -2,7 +2,9 @@
 
 A free, lightweight PHP script that checks whether your websites are up and emails you when one goes down. It has no Composer dependencies and is built for shared hosting, so you can run it as a cronjob.
 
-> **Note:** This project was vibe-coded. It works for its author, but review the code before relying on it for anything critical.
+> **Note:** This project is vibe-coded.
+
+<img width="982" height="1013" alt="Screenshot 2026-09-24 at 22 50 17" src="https://github.com/user-attachments/assets/39c26c2a-69a1-4f21-b69f-d13ff4bf7581" />
 
 ## Requirements
 
@@ -102,6 +104,8 @@ return [
     ],
 ];
 ```
+
+<img width="1090" height="909" alt="Screenshot 2026-09-24 at 22 52 16" src="https://github.com/user-attachments/assets/c8b9ce6d-5c5b-4d11-9611-9c19bdb645e6" />
 
 ## Security
 
