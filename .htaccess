@@ -1,0 +1,5 @@
+# Only the web interface is reachable via http. Everything else (config,
+# cronjob, templates, vendor/ and tests/ of the dev setup) is denied.
+<FilesMatch "^(?!(index\.php|layout\.css|app\.js)$)">
+    Require all denied
+</FilesMatch>

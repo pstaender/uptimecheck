@@ -1,0 +1,41 @@
+{
+    "name": "pstaender/uptimecheck",
+    "description": "Very simple uptime check for shared hosting",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-curl": "*",
+        "ext-pdo_pgsql": "*"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "start": [
+            "Composer\\Config::disableProcessTimeout",
+            "php -S localhost:8000 -t ."
+        ],
+        "cron": "php cronjob.php --verbose",
+        "test-mail": "php cronjob.php --test-mail",
+        "hash-password": "php -r 'echo password_hash($argv[1] ?? \"\", PASSWORD_DEFAULT), PHP_EOL;'",
+        "test": "pest"
+    },
+    "scripts-descriptions": {
+        "serve": "Starts the web interface on http://localhost:8000 for development",
+        "cron": "Runs the checks once, printing every result",
+        "test-mail": "Sends a test notification mail to the configured recipients",
+        "hash-password": "Prints a password hash for auth.password: composer hash-password -- 'your-password'",
+        "test": "Runs the test suite (needs a local postgres)"
+    },
+    "require-dev": {
+        "pestphp/pest": "^4.7"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    }
+}
