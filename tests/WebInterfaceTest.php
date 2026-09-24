@@ -232,7 +232,49 @@ describe('site details', function () {
             ->and(substr_count($body, '<div class="hours">'))->toBe(7)
             ->and(substr_count($body, 'class="fail" title="' . gmdate('D H:00')))->toBe(1);
         preg_match('#<div class="columns">(.*?)</div>#s', $body, $histogram);
-        expect(substr_count($histogram[1], '<i'))->toBe(60);
+        expect(substr_count($histogram[1], '<i'))->toBe(60)
+            ->and($body)->toContain('aria-current="page">Distribution');
+    });
+
+    it('shows the response time over time', function () {
+        Env::config(['max_response_time' => 2, 'sites' => [Env::site('a') => []]]);
+        Env::cron();
+        Env::setSite('a', ['status' => 500]);
+        Env::cron();
+        $browser = new Browser();
+        $browser->login();
+
+        $body = $browser->get('/index.php', ['site' => Env::site('a'), 'view' => 'time'])['body'];
+        preg_match('#<figure class="chart timeline">.*?<span class="bars">(.*?)</span>#s', $body, $bars);
+
+        expect($body)->toContain('aria-current="page">Over time')
+            ->not->toContain('class="chart histogram"')
+            ->toContain('0ms – 2,000ms (max. response)')
+            ->and(substr_count($bars[1], '<i'))->toBe(120)
+            ->and(substr_count($bars[1], 'class="fail"'))->toBe(1)
+            ->and(substr_count($body, 'data-format="time"'))->toBe(5);
+    });
+
+    it('keeps the view when switching the period or filtering', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        $browser = new Browser();
+        $browser->login();
+
+        $body = $browser->get('/index.php', ['site' => Env::site('a'), 'view' => 'time', 'period' => 'week'])['body'];
+
+        expect($body)->toContain('<input type="hidden" name="view" value="time" />')
+            ->toContain('data-format="weekday"')
+            ->toContain(h_url(['site' => Env::site('a'), 'period' => 'week', 'view' => 'time', 'failed' => 1]))
+            ->toContain(h_url(['site' => Env::site('a'), 'period' => 'week']) . '"');
+    });
+
+    it('falls back to the distribution for an unknown view', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        $browser = new Browser();
+        $browser->login();
+
+        expect($browser->get('/index.php', ['site' => Env::site('a'), 'view' => 'pie'])['body'])
+            ->toContain('class="chart histogram"');
     });
 
     it('explains when there are no checks in the period', function () {

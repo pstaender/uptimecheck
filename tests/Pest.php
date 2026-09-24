@@ -14,6 +14,12 @@ function checks(): array
     return Env::db()->query('SELECT * FROM checks ORDER BY id')->fetchAll();
 }
 
+/** A link to the web interface as it appears (html escaped) in its pages. */
+function h_url(array $params): string
+{
+    return htmlspecialchars('/index.php?' . http_build_query($params), ENT_QUOTES);
+}
+
 /** Subjects of all mails sent so far. */
 function subjects(): array
 {

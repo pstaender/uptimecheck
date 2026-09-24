@@ -12,7 +12,8 @@
   --color-cell-empty: #f5f7fa;
   --color-fast: #1ba1e2;
   --color-slow: #9b7be8;
-  --color-fail: #e5337a;
+  --color-warn: #e5337a;
+  --color-fail: var(--color-danger);
   --color-band: #1f2125;
   --color-band-text: #fff;
   --color-band-muted: #b0b6bf;
@@ -230,7 +231,11 @@ h2 {
   gap: 2px;
 
   i {
-    --bar: color-mix(in oklch, var(--color-fast), var(--color-slow) calc(var(--t, 0) * 100%));
+    --bar: color-mix(
+      in oklch,
+      color-mix(in oklch, var(--color-fast), var(--color-slow) clamp(0%, calc(var(--t, 0) * 200%), 100%)),
+      var(--color-warn) clamp(0%, calc((var(--t, 0) * 2 - 1) * 100%), 100%)
+    );
     flex: 1;
     min-width: 1px;
     border-radius: 1px;
@@ -245,22 +250,73 @@ h2 {
   height: 2.75rem;
 }
 
-.histogram {
-  margin: 0 0 calc(2 * var(--space));
+.chart {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: var(--space-small);
+  margin: 0;
 
-  .columns {
+  .columns,
+  .bars {
     height: clamp(10rem, 30vh, 18rem);
-    gap: 3px;
     i {
       background: linear-gradient(to top, var(--bar) calc(var(--h, 0) * 100%), var(--color-track-light) 0);
     }
   }
-  .axis {
+  .columns {
+    gap: 3px;
+  }
+  .bars {
+    gap: 1px;
+  }
+  .axis,
+  .y-axis {
     display: flex;
     justify-content: space-between;
-    margin-top: var(--space-small);
     color: var(--color-muted);
     font-size: 0.75rem;
+  }
+  .axis {
+    margin-top: var(--space-small);
+  }
+  .y-axis {
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1;
+  }
+
+  &.timeline {
+    grid-template-columns: auto minmax(0, 1fr);
+    .axis {
+      grid-column: 2;
+    }
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-small);
+  margin: var(--space-small) 0 calc(2 * var(--space));
+
+  .scale,
+  .swatch {
+    display: inline-block;
+    height: 0.6rem;
+    border-radius: 1px;
+  }
+  .scale {
+    width: 4rem;
+    background: linear-gradient(to right, var(--color-fast), var(--color-slow), var(--color-warn));
+  }
+  .swatch {
+    width: 0.6rem;
+    margin-left: var(--space);
+    &.fail {
+      background: var(--color-fail);
+    }
   }
 }
 
@@ -273,6 +329,9 @@ h2 {
   border-top: 1px solid var(--color-line);
   p {
     margin: 0;
+  }
+  .views {
+    margin-left: auto;
   }
 }
 
@@ -339,7 +398,7 @@ h2 {
         background: var(--color-cell);
       }
       &.slow {
-        background: var(--color-slow);
+        background: var(--color-warn);
       }
       &.fail {
         background: var(--color-fail);
@@ -352,7 +411,8 @@ h2 {
 }
 
 .filter,
-.pagination {
+.pagination,
+.views {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;

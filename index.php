@@ -45,11 +45,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 const PERIODS = [
-    'day' => ['label' => 'Past day', 'seconds' => 86400],
-    'week' => ['label' => 'Past week', 'seconds' => 604800],
-    'month' => ['label' => 'Past month', 'seconds' => 2592000],
+    'day' => ['label' => 'Past day', 'seconds' => 86400, 'tick' => 'time', 'tick_fallback' => 'H:i'],
+    'week' => ['label' => 'Past week', 'seconds' => 604800, 'tick' => 'weekday', 'tick_fallback' => 'D j'],
+    'month' => ['label' => 'Past month', 'seconds' => 2592000, 'tick' => 'date', 'tick_fallback' => 'M j'],
 ];
+const VIEWS = ['distribution' => 'Distribution', 'time' => 'Over time'];
 const BARS = 60;
+const TIMELINE_BARS = 120;
 const HISTOGRAM_BINS = 60;
 
 function url(array $params = []): string
@@ -135,11 +137,39 @@ function check_class(array $row): string
     return !$row['success'] ? 'fail' : ($row['slow'] ? 'slow' : 'ok');
 }
 
-function render_bars(array $buckets, int $from, int $bucketSeconds, float $scale): string
+/**
+ * Mean response time, result and number of checks per time slot of $bucketSeconds, keyed by site and slot (1 = oldest).
+ */
+function response_buckets(PDO $pdo, array $sites, int $from, int $bucketSeconds, int $count): array
 {
-    $max = max([0.001, ...array_map(fn($b) => (float) $b['response_time'], $buckets)]);
+    if (!$sites) {
+        return [];
+    }
+    $placeholders = implode(',', array_fill(0, count($sites), '?'));
+    $stmt = $pdo->prepare("
+        SELECT site,
+               width_bucket(extract(epoch FROM checked_at), ?::numeric, ?::numeric, $count) AS bucket,
+               avg(response_time) AS response_time,
+               bool_and(success) AS success,
+               bool_or(slow) AS slow,
+               count(*) AS checks
+        FROM checks
+        WHERE site IN ($placeholders) AND checked_at >= to_timestamp(?)
+        GROUP BY site, bucket
+    ");
+    $stmt->execute([$from, $from + $count * $bucketSeconds, ...$sites, $from]);
+    $buckets = [];
+    foreach ($stmt as $row) {
+        $buckets[$row['site']][$row['bucket']] = $row;
+    }
+    return $buckets;
+}
+
+function render_bars(array $buckets, int $count, int $from, int $bucketSeconds, float $scale, ?float $max = null): string
+{
+    $max ??= max([0.001, ...array_map(fn($b) => (float) $b['response_time'], $buckets)]);
     $html = '';
-    for ($i = 1; $i <= BARS; $i++) {
+    for ($i = 1; $i <= $count; $i++) {
         $bucket = $buckets[$i] ?? null;
         if ($bucket === null) {
             $html .= '<i></i>';
@@ -157,7 +187,7 @@ function render_bars(array $buckets, int $from, int $bucketSeconds, float $scale
         $html .= sprintf(
             '<i class="%s" style="--h:%.3f;--t:%.3f" title="%s"></i>',
             $class,
-            $class === 'fail' || $responseTime === null ? 1 : max(0.1, $responseTime / $max),
+            $class === 'fail' || $responseTime === null ? 1 : min(1, max(0.02, $responseTime / $max)),
             $responseTime === null ? 1 : speed($responseTime, $scale),
             h($title),
         );
@@ -180,6 +210,12 @@ if ($loggedIn) {
     $from = time() + 1 - $periodSeconds;
 
     $site = isset($_GET['site'], $sites[$_GET['site']]) ? $_GET['site'] : null;
+    $view = isset(VIEWS[$_GET['view'] ?? '']) ? $_GET['view'] : 'distribution';
+    $query = [
+        'site' => $site,
+        'period' => $period === 'day' ? null : $period,
+        'view' => $view === 'distribution' ? null : $view,
+    ];
     $selected = $site !== null ? [$site] : array_keys($sites);
     $placeholders = implode(',', array_fill(0, max(1, count($selected)), '?'));
 
@@ -205,24 +241,7 @@ if ($loggedIn) {
 
     if ($site === null) {
         $bucketSeconds = intdiv($periodSeconds, BARS);
-        $buckets = [];
-        if ($selected) {
-            $stmt = $pdo->prepare("
-                SELECT site,
-                       width_bucket(extract(epoch FROM checked_at), ?::numeric, ?::numeric, " . BARS . ") AS bucket,
-                       avg(response_time) AS response_time,
-                       bool_and(success) AS success,
-                       bool_or(slow) AS slow,
-                       count(*) AS checks
-                FROM checks
-                WHERE site IN ($placeholders) AND checked_at >= to_timestamp(?)
-                GROUP BY site, bucket
-            ");
-            $stmt->execute([$from, $from + BARS * $bucketSeconds, ...$selected, $from]);
-            foreach ($stmt as $row) {
-                $buckets[$row['site']][$row['bucket']] = $row;
-            }
-        }
+        $buckets = response_buckets($pdo, $selected, $from, $bucketSeconds, BARS);
         $notifications = $pdo->query('SELECT * FROM notifications ORDER BY sent_at DESC LIMIT 10')->fetchAll();
     } else {
         $options = $sites[$site];
@@ -230,19 +249,25 @@ if ($loggedIn) {
         $scale = $options['max_response_time'] ?? 1.0;
         $s = $stats[$site] ?? null;
 
-        $upper = nice_ceil((float) ($s['max'] ?? 1) ?: 1);
-        $histogram = array_fill(1, HISTOGRAM_BINS, 0);
-        $stmt = $pdo->prepare('
-            SELECT width_bucket(response_time, 0, ?::double precision, ' . HISTOGRAM_BINS . ') AS bin, count(*) AS checks
-            FROM checks
-            WHERE site = ? AND checked_at >= to_timestamp(?) AND response_time IS NOT NULL
-            GROUP BY bin
-        ');
-        $stmt->execute([$upper, $site, $from]);
-        foreach ($stmt as $row) {
-            $histogram[min(HISTOGRAM_BINS, max(1, $row['bin']))] += $row['checks'];
+        if ($view === 'time') {
+            $timelineSeconds = intdiv($periodSeconds, TIMELINE_BARS);
+            $timeline = response_buckets($pdo, [$site], $from, $timelineSeconds, TIMELINE_BARS)[$site] ?? [];
+            $upper = nice_ceil(max([0, ...array_map(fn($b) => (float) $b['response_time'], $timeline)]) ?: 1);
+        } else {
+            $upper = nice_ceil((float) ($s['max'] ?? 1) ?: 1);
+            $histogram = array_fill(1, HISTOGRAM_BINS, 0);
+            $stmt = $pdo->prepare('
+                SELECT width_bucket(response_time, 0, ?::double precision, ' . HISTOGRAM_BINS . ') AS bin, count(*) AS checks
+                FROM checks
+                WHERE site = ? AND checked_at >= to_timestamp(?) AND response_time IS NOT NULL
+                GROUP BY bin
+            ');
+            $stmt->execute([$upper, $site, $from]);
+            foreach ($stmt as $row) {
+                $histogram[min(HISTOGRAM_BINS, max(1, $row['bin']))] += $row['checks'];
+            }
+            $histogramMax = max(1, ...$histogram);
         }
-        $histogramMax = max(1, ...$histogram);
 
         $gridFrom = gmmktime(0, 0, 0) - 6 * 86400;
         $hours = [];
@@ -345,7 +370,7 @@ if ($loggedIn) {
 <?php foreach ($sites as $url => $options): $state = $states[$url]; $last = $state['last_check']; $s = $stats[$url] ?? null; ?>
         <article>
           <div class="name">
-            <a href="<?= h(url(['site' => $url, 'period' => $period === 'day' ? null : $period])) ?>"><?= h(site_name($url)) ?></a>
+            <a href="<?= h(url(['site' => $url, 'period' => $query['period']])) ?>"><?= h(site_name($url)) ?></a>
             <span class="muted"><?= h($url) ?></span>
 <?php if ($last && (!$last['success'] || $last['slow'])): ?>
             <span class="<?= $last['success'] ? 'warning' : 'danger' ?> small"><?= h($last['error']) ?></span>
@@ -356,7 +381,7 @@ if ($loggedIn) {
             <div><dt>Mean</dt><dd><?= ms($s && $s['mean'] !== null ? (float) $s['mean'] : null) ?></dd></div>
             <div><dt>Status</dt><dd><?= status_badge($state) ?></dd></div>
           </dl>
-          <?= render_bars($buckets[$url] ?? [], $from, $bucketSeconds, $options['max_response_time'] ?? 1.0) ?>
+          <?= render_bars($buckets[$url] ?? [], BARS, $from, $bucketSeconds, $options['max_response_time'] ?? 1.0) ?>
         </article>
 <?php endforeach ?>
       </div>
@@ -379,7 +404,7 @@ if ($loggedIn) {
 <?php endif ?>
       </section>
 <?php else: ?>
-      <nav class="back"><a href="<?= h(url(['period' => $period === 'day' ? null : $period])) ?>">← All checks</a></nav>
+      <nav class="back"><a href="<?= h(url(['period' => $query['period']])) ?>">← All checks</a></nav>
 
       <hgroup class="hero">
         <h1><?= h(site_name($site)) ?></h1>
@@ -393,7 +418,22 @@ if ($loggedIn) {
 <?php endif ?>
       </hgroup>
 
-      <figure class="histogram">
+<?php if ($view === 'time'): ?>
+      <figure class="chart timeline">
+        <div class="y-axis">
+<?php foreach (range(4, 0) as $tick): ?>
+          <span><?= duration($upper * $tick / 4) ?></span>
+<?php endforeach ?>
+        </div>
+        <?= render_bars($timeline, TIMELINE_BARS, $from, $timelineSeconds, $scale, $upper) ?>
+        <div class="axis">
+<?php foreach (range(0, 4) as $tick): $ts = $from + intdiv($periodSeconds * $tick, 4); ?>
+          <time datetime="<?= gmdate('c', $ts) ?>" data-format="<?= PERIODS[$period]['tick'] ?>"><?= gmdate(PERIODS[$period]['tick_fallback'], $ts) ?></time>
+<?php endforeach ?>
+        </div>
+      </figure>
+<?php else: ?>
+      <figure class="chart histogram">
         <div class="columns">
 <?php foreach ($histogram as $bin => $count): $binFrom = ($bin - 1) * $upper / HISTOGRAM_BINS; $binTo = $bin * $upper / HISTOGRAM_BINS; ?>
           <i style="--h:<?= round($count / $histogramMax, 3) ?>;--t:<?= speed(($binFrom + $binTo) / 2, $scale) ?>" title="<?= h(duration($binFrom) . ' – ' . duration($binTo) . ": $count " . ($count === 1 ? 'check' : 'checks')) ?>"></i>
@@ -405,6 +445,11 @@ if ($loggedIn) {
 <?php endforeach ?>
         </div>
       </figure>
+<?php endif ?>
+      <p class="legend muted small">
+        <span class="scale"></span> 0ms – <?= ms($scale) ?><?= $options['max_response_time'] === null ? '' : ' (max. response)' ?>
+        <span class="swatch fail"></span> failed
+      </p>
 
       <div class="toolbar">
         <p class="muted small">
@@ -414,8 +459,16 @@ if ($loggedIn) {
           timeout <?= h((string) $options['timeout']) ?>s
           <?= $options['max_response_time'] !== null ? '· max. response ' . ms($options['max_response_time']) : '' ?>
         </p>
+        <nav class="views">
+<?php foreach (VIEWS as $key => $label): ?>
+          <a href="<?= h(url([...$query, 'view' => $key === 'distribution' ? null : $key])) ?>"<?= $key === $view ? ' aria-current="page"' : '' ?>><?= $label ?></a>
+<?php endforeach ?>
+        </nav>
         <form class="period" method="get">
           <input type="hidden" name="site" value="<?= h($site) ?>" />
+<?php if ($query['view']): ?>
+          <input type="hidden" name="view" value="<?= h($query['view']) ?>" />
+<?php endif ?>
           <select name="period" aria-label="Period" data-autosubmit>
 <?php foreach (PERIODS as $key => $p): ?>
             <option value="<?= $key ?>"<?= $key === $period ? ' selected' : '' ?>><?= $p['label'] ?></option>
@@ -458,8 +511,8 @@ if ($loggedIn) {
 
       <section>
         <nav class="filter">
-          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period])) ?>"<?= $failedOnly ? '' : ' aria-current="page"' ?>>All checks</a>
-          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period, 'failed' => 1])) ?>"<?= $failedOnly ? ' aria-current="page"' : '' ?>>Failed only</a>
+          <a href="<?= h(url($query)) ?>"<?= $failedOnly ? '' : ' aria-current="page"' ?>>All checks</a>
+          <a href="<?= h(url([...$query, 'failed' => 1])) ?>"<?= $failedOnly ? ' aria-current="page"' : '' ?>>Failed only</a>
           <span class="muted"><?= number_format($total) ?> <?= $total === 1 ? 'check' : 'checks' ?></span>
         </nav>
 
@@ -491,11 +544,11 @@ if ($loggedIn) {
 <?php if ($pages > 1): ?>
         <nav class="pagination">
 <?php if ($page > 1): ?>
-          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period, 'failed' => $failedOnly ? 1 : null, 'page' => $page - 1])) ?>">← Newer</a>
+          <a href="<?= h(url([...$query, 'failed' => $failedOnly ? 1 : null, 'page' => $page - 1])) ?>">← Newer</a>
 <?php endif ?>
           <span class="muted">Page <?= $page ?> of <?= $pages ?></span>
 <?php if ($page < $pages): ?>
-          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period, 'failed' => $failedOnly ? 1 : null, 'page' => $page + 1])) ?>">Older →</a>
+          <a href="<?= h(url([...$query, 'failed' => $failedOnly ? 1 : null, 'page' => $page + 1])) ?>">Older →</a>
 <?php endif ?>
         </nav>
 <?php endif ?>
