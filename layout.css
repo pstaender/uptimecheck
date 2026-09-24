@@ -1,14 +1,13 @@
 :root {
-  --color-success: #2e7d32;
+  --color-success: #4ca43f;
   --color-warning: #b26a00;
-  --color-danger: #c62828;
+  --color-danger: var(--color-red);
   --color-muted: #777;
   --tick-ok: #b7d9b9;
 
   @media (prefers-color-scheme: dark) {
     --color-success: #66bb6a;
     --color-warning: #ffb74d;
-    --color-danger: #ef5350;
     --color-muted: #999;
     --tick-ok: #2f5a32;
   }
@@ -50,6 +49,9 @@ td {
 
 .success {
   color: var(--color-success);
+  &.badge {
+    background: #d0f6a1;
+  }
 }
 .warning {
   color: var(--color-warning);
@@ -74,7 +76,7 @@ td {
   display: inline-block;
   min-width: 4.5em;
   padding: 0.05em 0.5em;
-  border: 1px solid currentColor;
+  border: 1.5px solid currentColor;
   border-radius: var(--border-radius);
   font-size: 0.8em;
   font-weight: var(--font-weight-semi-bold);
