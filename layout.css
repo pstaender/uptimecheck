@@ -371,6 +371,9 @@ h2 {
 .days {
   margin-block: calc(3 * var(--space));
   text-align: center;
+  @media (min-width: 900px) {
+    margin-block: 30vh calc(4 * var(--space));
+  }
 
   .grid {
     display: flex;

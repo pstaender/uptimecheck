@@ -478,15 +478,6 @@ if ($loggedIn) {
         </form>
       </div>
 
-      <dl class="statsbar">
-        <div><dt>Uptime</dt><dd><?= percent($s ? (float) $s['uptime'] : null) ?></dd></div>
-        <div><dt>Mean response</dt><dd><?= ms($s && $s['mean'] !== null ? (float) $s['mean'] : null) ?></dd></div>
-        <div><dt>95th percentile</dt><dd><?= ms($s && $s['p95'] !== null ? (float) $s['p95'] : null) ?></dd></div>
-        <div><dt>Checks</dt><dd><?= number_format((int) ($s['checks'] ?? 0)) ?></dd></div>
-        <div><dt>Failures</dt><dd><?= number_format((int) ($s['failures'] ?? 0)) ?></dd></div>
-        <div><dt>Status</dt><dd><?= status_badge($state) ?></dd></div>
-      </dl>
-
       <section class="days">
         <h2>Past 7 days</h2>
         <div class="grid">
@@ -569,6 +560,17 @@ if ($loggedIn) {
 <?php endif ?>
       · <b>UPTIME</b>CHECK
     </footer>
+<?php endif ?>
+
+<?php if ($loggedIn && $site !== null): ?>
+    <dl class="statsbar">
+      <div><dt>Uptime</dt><dd><?= percent($s ? (float) $s['uptime'] : null) ?></dd></div>
+      <div><dt>Mean response</dt><dd><?= ms($s && $s['mean'] !== null ? (float) $s['mean'] : null) ?></dd></div>
+      <div><dt>95th percentile</dt><dd><?= ms($s && $s['p95'] !== null ? (float) $s['p95'] : null) ?></dd></div>
+      <div><dt>Checks</dt><dd><?= number_format((int) ($s['checks'] ?? 0)) ?></dd></div>
+      <div><dt>Failures</dt><dd><?= number_format((int) ($s['failures'] ?? 0)) ?></dd></div>
+      <div><dt>Status</dt><dd><?= status_badge($state) ?></dd></div>
+    </dl>
 <?php endif ?>
   </body>
 </html>
