@@ -43,11 +43,26 @@ The check contains the check of every website. The table keeps track of failed a
 First the script migrates the database. The the script (in case the script exists/crashed later in the process) looks for the last checks and find sites whose failed checks in a row reached the value of tolerated_failures_in_a_row (1 = notify on the first failed check). When the threshold is reached, the website(s) are marked as down and the notification is sent (send a consolidated notification, not one message per website). The script will not send notifications for every failed check, only when the threshold is reached.
 When something in up and down sites has changed since the last notification, send a new notification. When everything is up to normal, also send a notification that everything is back to normal. Use the `email_template.php`. Use inline css to style the html. Also send a plain text email (see `email_plain_text_template.php`).
 
+## Programming Style
+
+* simple is better than clever
+* use built-in functions wherever possible
+* don't comment code, the code should be self-explanatory
+* only comment / describe business logic, not the code itself
+
 ## Technology
 
 * use modern CSS
 * use modern vanilla (module) JS (if you need to use module, load the directly in the js file, no NodeJS)
 * use modern PHP 8.3+
 * use only postgres for database (pdo_pgsql)
-* use php built-in functions, no composer packages
+* use php built-in functions, no composer packages at runtime (dev dependencies like pest are fine)
 * use php curl for http requests
+
+## Development
+
+* `composer serve` starts the web interface on http://localhost:8000
+* `composer cron` runs the checks once (verbose), `composer test-mail` sends a test mail
+* `composer hash-password -- 'your-password'` prints the hash for `auth.password`
+* `composer test` runs the pest tests in `tests/`. They need a local postgres (database `uptime_test` is created if missing, see `tests/Support/Env.php` for the `UPTIMECHECK_TEST_DB_*` env vars). The tests run `cronjob.php` and the web interface as real processes against a fixture http server (`tests/Support/router.php`) and a fake smtp server (`tests/Support/smtp_server.php`).
+
