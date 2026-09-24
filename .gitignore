@@ -4,3 +4,4 @@
 /.phpunit.cache/
 /config.*.php
 !/config.example.php
+/dist/
