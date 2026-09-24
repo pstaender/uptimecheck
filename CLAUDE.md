@@ -8,7 +8,9 @@ Uptimecheck is a very simple php script for shared hosting sites.
 
 `schema.php` contains the database schema.
 
-`config.php` has the config.
+`config.php` has the config (gitignored, see `config.example.php` for all options).
+
+`lib.php` contains shared helpers (config, db, migrations, site state) for `index.php` and `cronjob.php`.
 
 
 ## Frontend
@@ -38,7 +40,7 @@ The check contains the check of every website. The table keeps track of failed a
 
 ## Check in cronjob.php
 
-First the script migrates the database. The the script (in case the script exists/crashed later in the process) looks for the last checks and find sites that exceed the value of tolerated_failures_in_a_row. When the threshold is reached, the website(s) are marked as down and the notification is sent (send a consolidated notification, not one message per website). The script will not send notifications for every failed check, only when the threshold is reached.
+First the script migrates the database. The the script (in case the script exists/crashed later in the process) looks for the last checks and find sites whose failed checks in a row reached the value of tolerated_failures_in_a_row (1 = notify on the first failed check). When the threshold is reached, the website(s) are marked as down and the notification is sent (send a consolidated notification, not one message per website). The script will not send notifications for every failed check, only when the threshold is reached.
 When something in up and down sites has changed since the last notification, send a new notification. When everything is up to normal, also send a notification that everything is back to normal. Use the `email_template.php`. Use inline css to style the html. Also send a plain text email (see `email_plain_text_template.php`).
 
 ## Technology
