@@ -93,7 +93,7 @@ function duration(float $seconds): string
 
 function site_name(string $url): string
 {
-    return preg_replace('#^https?://#', '', $url);
+    return rtrim(preg_replace('#^https?://#', '', $url), '/');
 }
 
 /**

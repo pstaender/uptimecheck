@@ -188,6 +188,17 @@ describe('overview', function () {
             ->toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
 
+    it('shows site names without scheme and trailing slash', function () {
+        $url = Env::site('ok') . '/';
+        Env::config(['sites' => [$url => []]]);
+        $browser = new Browser();
+        $browser->login();
+
+        $name = substr(Env::site('ok'), strlen('http://'));
+        expect($browser->get()['body'])->toContain(">$name</a>")
+            ->and($browser->get('/index.php', ['site' => $url])['body'])->toContain("<h1>$name</h1>");
+    });
+
     it('explains that no sites are configured', function () {
         $browser = new Browser();
         $browser->login();
