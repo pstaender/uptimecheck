@@ -18,39 +18,84 @@ function formatTimes() {
   }
 }
 
-// Fetches the page again and morphs only the changed parts into the current page (like Turbo's page refresh).
-async function refresh() {
-  const response = await fetch(location.href, { headers: { Accept: "text/html" } }).catch(() => null);
+async function fetchPage(url) {
+  const response = await fetch(url, { headers: { Accept: "text/html" } }).catch(() => null);
   if (!response?.ok) {
-    return;
+    return null;
   }
-  const page = new DOMParser().parseFromString(await response.text(), "text/html");
+  return { url: response.url, page: new DOMParser().parseFromString(await response.text(), "text/html") };
+}
+
+// Morphs only the changed parts of the fetched page into the current page (like Turbo).
+async function render(page) {
   const idiomorph = await import(IDIOMORPH).catch(() => null);
   if (!idiomorph) {
+    return false;
+  }
+  idiomorph.Idiomorph.morph(document.body, page.body);
+  document.title = page.title;
+  formatTimes();
+  return true;
+}
+
+async function refresh() {
+  const result = await fetchPage(location.href);
+  if (result && !(await render(result.page))) {
+    location.reload();
+  }
+}
+
+async function navigate(url) {
+  const samePage = new URL(url).searchParams.get("site") === new URLSearchParams(location.search).get("site");
+  document.documentElement.ariaBusy = "true";
+  const result = await fetchPage(url);
+  document.documentElement.ariaBusy = null;
+  if (!result) {
+    location.href = url;
+    return;
+  }
+  history.pushState(null, "", result.url);
+  if (!(await render(result.page))) {
     location.reload();
     return;
   }
-  idiomorph.Idiomorph.morph(document.body, page.body, { morphStyle: "innerHTML" });
-  document.title = page.title;
-  formatTimes();
+  if (!samePage) {
+    scrollTo(0, 0);
+  }
 }
 
 formatTimes();
 
-// Refreshes the overview periodically, but only while the tab is visible.
-const interval = Number(document.body.dataset.autorefresh);
-if (interval > 0) {
-  let last = Date.now();
-  setInterval(() => {
-    if (document.visibilityState === "visible" && Date.now() - last >= interval * 1000) {
-      last = Date.now();
-      refresh();
-    }
-  }, 5000);
-}
+// Refreshes pages with data-autorefresh periodically, but only while the tab is visible.
+let lastRefresh = Date.now();
+setInterval(() => {
+  const interval = Number(document.body.dataset.autorefresh);
+  if (interval > 0 && document.visibilityState === "visible" && Date.now() - lastRefresh >= interval * 1000) {
+    lastRefresh = Date.now();
+    refresh();
+  }
+}, 5000);
+
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("a[href]");
+  const modified = event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+  if (!link || modified || event.defaultPrevented || link.target || link.hasAttribute("download")) {
+    return;
+  }
+  if (link.origin !== location.origin || link.pathname !== location.pathname) {
+    return;
+  }
+  event.preventDefault();
+  navigate(link.href);
+});
 
 document.addEventListener("change", (event) => {
   if (event.target.matches("select[data-autosubmit]")) {
-    event.target.form.submit();
+    const form = event.target.form;
+    const url = new URL(form.action);
+    url.search = new URLSearchParams(new FormData(form)).toString();
+    navigate(url.href);
   }
 });
+
+addEventListener("popstate", refresh);

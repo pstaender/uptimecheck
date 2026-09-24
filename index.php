@@ -508,7 +508,7 @@ if ($loggedIn) {
         </nav>
 
 <?php if (!$checks): ?>
-        <p class="muted">No checks yet.</p>
+        <p class="muted" style="margin-top: var(--space);">No checks yet.</p>
 <?php else: ?>
         <table class="list">
           <thead>
