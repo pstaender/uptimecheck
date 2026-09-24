@@ -44,6 +44,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+const PERIODS = [
+    'day' => ['label' => 'Past day', 'seconds' => 86400],
+    'week' => ['label' => 'Past week', 'seconds' => 604800],
+    'month' => ['label' => 'Past month', 'seconds' => 2592000],
+];
+const BARS = 60;
+const HISTOGRAM_BINS = 60;
+
 function url(array $params = []): string
 {
     $path = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
@@ -65,15 +73,44 @@ function percent(?float $value): string
     if ($value === null) {
         return '–';
     }
-    $percent = $value * 100;
+    // floor instead of round: never show 100% when there were failures
+    $percent = floor($value * 10000) / 100;
     $class = $percent >= 99.5 ? '' : ($percent >= 95 ? 'warning' : 'danger');
-    // floor instead of round: never show 100 % when there were failures
-    return sprintf('<span class="%s">%s %%</span>', $class, rtrim(rtrim(number_format(floor($percent * 100) / 100, 2), '0'), '.'));
+    return sprintf('<span class="%s">%s%%</span>', $class, rtrim(rtrim(number_format($percent, 2), '0'), '.'));
 }
 
 function ms(?float $seconds): string
 {
-    return $seconds === null ? '–' : number_format($seconds * 1000) . ' ms';
+    return $seconds === null ? '–' : number_format($seconds * 1000) . 'ms';
+}
+
+function duration(float $seconds): string
+{
+    return $seconds < 1 ? round($seconds * 1000) . 'ms' : rtrim(rtrim(number_format($seconds, 1), '0'), '.') . 's';
+}
+
+function site_name(string $url): string
+{
+    return preg_replace('#^https?://#', '', $url);
+}
+
+/**
+ * Position of a response time between fast (0) and the site's max_response_time (1),
+ * used to color bars from blue to purple.
+ */
+function speed(float $responseTime, float $scale): float
+{
+    return round(min(1, $responseTime / $scale), 3);
+}
+
+function nice_ceil(float $seconds): float
+{
+    foreach ([0.1, 0.2, 0.25, 0.5, 1, 2, 2.5, 5, 10, 20, 30, 60] as $step) {
+        if ($seconds <= $step) {
+            return $step;
+        }
+    }
+    return ceil($seconds / 60) * 60;
 }
 
 function status_badge(array $state): string
@@ -93,19 +130,39 @@ function status_badge(array $state): string
     return '<span class="badge success">up</span>';
 }
 
-function render_history(array $checks): string
+function check_class(array $row): string
 {
+    return !$row['success'] ? 'fail' : ($row['slow'] ? 'slow' : 'ok');
+}
+
+function render_bars(array $buckets, int $from, int $bucketSeconds, float $scale): string
+{
+    $max = max([0.001, ...array_map(fn($b) => (float) $b['response_time'], $buckets)]);
     $html = '';
-    foreach (array_reverse($checks) as $c) {
-        $label = sprintf(
-            '%s UTC · %s%s',
-            gmdate('Y-m-d H:i', strtotime($c['checked_at'])),
-            $c['success'] && !$c['slow'] ? 'OK' : ($c['error'] ?? 'failed'),
-            $c['response_time'] !== null ? ' · ' . ms((float) $c['response_time']) : '',
+    for ($i = 1; $i <= BARS; $i++) {
+        $bucket = $buckets[$i] ?? null;
+        if ($bucket === null) {
+            $html .= '<i></i>';
+            continue;
+        }
+        $class = check_class($bucket);
+        $responseTime = $bucket['response_time'] !== null ? (float) $bucket['response_time'] : null;
+        $title = sprintf(
+            '%s UTC · %s · %d %s',
+            gmdate('Y-m-d H:i', $from + ($i - 1) * $bucketSeconds),
+            $class === 'fail' ? 'failed' : 'mean ' . ms($responseTime),
+            $bucket['checks'],
+            $bucket['checks'] === 1 ? 'check' : 'checks',
         );
-        $html .= sprintf('<i class="%s" title="%s"></i>', $c['success'] ? ($c['slow'] ? 'slow' : 'ok') : 'fail', h($label));
+        $html .= sprintf(
+            '<i class="%s" style="--h:%.3f;--t:%.3f" title="%s"></i>',
+            $class,
+            $class === 'fail' || $responseTime === null ? 1 : max(0.1, $responseTime / $max),
+            $responseTime === null ? 1 : speed($responseTime, $scale),
+            h($title),
+        );
     }
-    return '<span class="history">' . $html . '</span>';
+    return '<span class="bars">' . $html . '</span>';
 }
 
 $loggedIn = isset($_SESSION['user']) && ($_SESSION['config'] ?? null) === config_file();
@@ -118,6 +175,10 @@ if ($loggedIn) {
     $states = site_states($pdo);
     $lastJob = $pdo->query('SELECT * FROM jobs ORDER BY started_at DESC LIMIT 1')->fetch() ?: null;
 
+    $period = isset(PERIODS[$_GET['period'] ?? '']) ? $_GET['period'] : 'day';
+    $periodSeconds = PERIODS[$period]['seconds'];
+    $from = time() + 1 - $periodSeconds;
+
     $site = isset($_GET['site'], $sites[$_GET['site']]) ? $_GET['site'] : null;
     $selected = $site !== null ? [$site] : array_keys($sites);
     $placeholders = implode(',', array_fill(0, max(1, count($selected)), '?'));
@@ -126,40 +187,79 @@ if ($loggedIn) {
     if ($selected) {
         $stmt = $pdo->prepare("
             SELECT site,
-                   avg(success::int) FILTER (WHERE checked_at > now() - interval '24 hours') AS up_24h,
-                   avg(success::int) FILTER (WHERE checked_at > now() - interval '7 days') AS up_7d,
-                   avg(success::int) AS up_30d,
-                   avg(response_time) FILTER (WHERE checked_at > now() - interval '24 hours') AS avg_response_24h,
-                   count(*) FILTER (WHERE NOT success AND checked_at > now() - interval '24 hours') AS failures_24h
+                   count(*) AS checks,
+                   avg(success::int) AS uptime,
+                   avg(response_time) AS mean,
+                   percentile_cont(0.95) WITHIN GROUP (ORDER BY response_time) AS p95,
+                   max(response_time) AS max,
+                   count(*) FILTER (WHERE NOT success) AS failures
             FROM checks
-            WHERE site IN ($placeholders) AND checked_at > now() - interval '30 days'
+            WHERE site IN ($placeholders) AND checked_at >= to_timestamp(?)
             GROUP BY site
         ");
-        $stmt->execute($selected);
+        $stmt->execute([...$selected, $from]);
         foreach ($stmt as $row) {
             $stats[$row['site']] = $row;
         }
     }
 
     if ($site === null) {
-        // overview: latest checks of every site for the history bar
-        $history = [];
+        $bucketSeconds = intdiv($periodSeconds, BARS);
+        $buckets = [];
         if ($selected) {
             $stmt = $pdo->prepare("
-                SELECT * FROM (
-                    SELECT site, checked_at, success, slow, response_time, error,
-                           row_number() OVER (PARTITION BY site ORDER BY checked_at DESC, id DESC) AS rn
-                    FROM checks WHERE site IN ($placeholders)
-                ) t WHERE rn <= 48 ORDER BY site, rn
+                SELECT site,
+                       width_bucket(extract(epoch FROM checked_at), ?::numeric, ?::numeric, " . BARS . ") AS bucket,
+                       avg(response_time) AS response_time,
+                       bool_and(success) AS success,
+                       bool_or(slow) AS slow,
+                       count(*) AS checks
+                FROM checks
+                WHERE site IN ($placeholders) AND checked_at >= to_timestamp(?)
+                GROUP BY site, bucket
             ");
-            $stmt->execute($selected);
+            $stmt->execute([$from, $from + BARS * $bucketSeconds, ...$selected, $from]);
             foreach ($stmt as $row) {
-                $history[$row['site']][] = $row;
+                $buckets[$row['site']][$row['bucket']] = $row;
             }
         }
         $notifications = $pdo->query('SELECT * FROM notifications ORDER BY sent_at DESC LIMIT 10')->fetchAll();
     } else {
-        // detail view: paginated list of checks
+        $options = $sites[$site];
+        $state = $states[$site];
+        $scale = $options['max_response_time'] ?? 1.0;
+        $s = $stats[$site] ?? null;
+
+        $upper = nice_ceil((float) ($s['max'] ?? 1) ?: 1);
+        $histogram = array_fill(1, HISTOGRAM_BINS, 0);
+        $stmt = $pdo->prepare('
+            SELECT width_bucket(response_time, 0, ?::double precision, ' . HISTOGRAM_BINS . ') AS bin, count(*) AS checks
+            FROM checks
+            WHERE site = ? AND checked_at >= to_timestamp(?) AND response_time IS NOT NULL
+            GROUP BY bin
+        ');
+        $stmt->execute([$upper, $site, $from]);
+        foreach ($stmt as $row) {
+            $histogram[min(HISTOGRAM_BINS, max(1, $row['bin']))] += $row['checks'];
+        }
+        $histogramMax = max(1, ...$histogram);
+
+        $gridFrom = gmmktime(0, 0, 0) - 6 * 86400;
+        $hours = [];
+        $stmt = $pdo->prepare("
+            SELECT extract(epoch FROM date_trunc('hour', checked_at))::bigint AS hour,
+                   bool_and(success) AS success,
+                   bool_or(slow) AS slow,
+                   count(*) AS checks
+            FROM checks
+            WHERE site = ? AND checked_at >= to_timestamp(?)
+            GROUP BY 1
+        ");
+        $stmt->execute([$site, $gridFrom]);
+        foreach ($stmt as $row) {
+            $hours[$row['hour']] = $row;
+        }
+
         $perPage = 100;
         $page = max(1, (int) ($_GET['page'] ?? 1));
         $failedOnly = !empty($_GET['failed']);
@@ -190,10 +290,23 @@ if ($loggedIn) {
   </head>
 
   <body<?= $loggedIn && $site === null ? ' data-autorefresh="60"' : '' ?>>
+    <header class="topbar">
+      <a class="brand" href="<?= h(url()) ?>"><b>UPTIME</b>CHECK</a>
+<?php if ($loggedIn): ?>
+      <form method="post">
+        <input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>" />
+        <button type="submit" name="action" value="logout" class="link">Log out</button>
+      </form>
+<?php endif ?>
+    </header>
+
     <main>
 <?php if (!$loggedIn): ?>
       <form method="post" class="login">
-        <h1>uptime</h1>
+        <hgroup class="hero">
+          <h1>Sign in</h1>
+          <p>Uptime of your sites at a glance.</p>
+        </hgroup>
 <?php if (!password_hash_configured()): ?>
         <p class="danger">auth.password in config.php must be a password_hash() hash. Create one with <code>php -r 'echo password_hash("your-password", PASSWORD_DEFAULT);'</code></p>
 <?php endif ?>
@@ -204,164 +317,205 @@ if ($loggedIn) {
         <input type="hidden" name="action" value="login" />
         <label>User <input type="text" name="user" autocomplete="username" autofocus /></label>
         <label>Password <input type="password" name="password" autocomplete="current-password" /></label>
-        <button type="submit" class="call-to-action">Log in</button>
+        <button type="submit">Log in</button>
       </form>
-<?php else: ?>
-      <header>
-        <h1><a href="<?= h(url()) ?>">uptime</a></h1>
-        <form method="post">
-          <input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>" />
-          <button type="submit" name="action" value="logout">Log out</button>
-        </form>
-      </header>
-
-<?php if ($site === null): ?>
-      <section class="summary">
+<?php elseif ($site === null): ?>
+      <hgroup class="hero">
+        <h1>Checks</h1>
 <?php if (!$sites): ?>
         <p>No sites configured. Add them to <code>config.php</code>.</p>
 <?php elseif ($downCount): ?>
-        <p class="headline danger"><?= $downCount ?> of <?= count($sites) ?> <?= count($sites) === 1 ? 'site' : 'sites' ?> down</p>
+        <p class="danger"><?= $downCount ?> of <?= count($sites) ?> <?= count($sites) === 1 ? 'site' : 'sites' ?> down</p>
 <?php else: ?>
-        <p class="headline success">All <?= count($sites) ?> <?= count($sites) === 1 ? 'site is' : 'sites are' ?> up</p>
+        <p>All <?= count($sites) ?> <?= count($sites) === 1 ? 'site is' : 'sites are' ?> up</p>
 <?php endif ?>
-        <p class="muted">
-<?php if ($lastJob): ?>
-          Last run <?= time_tag($lastJob['started_at']) ?>
-<?php if ($lastJob['status'] !== 'finished'): ?>
-          · <span class="<?= $lastJob['status'] === 'running' ? '' : 'danger' ?>"><?= h($lastJob['status']) ?></span><?= $lastJob['error'] ? ': ' . h($lastJob['error']) : '' ?>
-<?php endif ?>
-<?php else: ?>
-          The cronjob has not run yet.
-<?php endif ?>
-        </p>
-      </section>
+      </hgroup>
 
 <?php if ($sites): ?>
-      <table>
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Site</th>
-            <th>Last check</th>
-            <th align="right">Response</th>
-            <th align="right">24 h</th>
-            <th align="right">7 d</th>
-            <th align="right">30 d</th>
-            <th>History</th>
-          </tr>
-        </thead>
-        <tbody>
-<?php foreach ($sites as $url => $options): $state = $states[$url]; $last = $state['last_check']; $s = $stats[$url] ?? null; ?>
-          <tr>
-            <td><?= status_badge($state) ?></td>
-            <td>
-              <a href="<?= h(url(['site' => $url])) ?>"><?= h($url) ?></a>
-<?php if ($last && (!$last['success'] || $last['slow'])): ?>
-              <div class="muted small"><?= h($last['error']) ?></div>
-<?php endif ?>
-            </td>
-            <td><?= time_tag($last['checked_at'] ?? null) ?></td>
-            <td align="right"><?= ms($last && $last['response_time'] !== null ? (float) $last['response_time'] : null) ?></td>
-            <td align="right"><?= percent($s && $s['up_24h'] !== null ? (float) $s['up_24h'] : null) ?></td>
-            <td align="right"><?= percent($s && $s['up_7d'] !== null ? (float) $s['up_7d'] : null) ?></td>
-            <td align="right"><?= percent($s ? (float) $s['up_30d'] : null) ?></td>
-            <td><?= render_history($history[$url] ?? []) ?></td>
-          </tr>
+      <form class="period" method="get">
+        <select name="period" aria-label="Period" data-autosubmit>
+<?php foreach (PERIODS as $key => $p): ?>
+          <option value="<?= $key ?>"<?= $key === $period ? ' selected' : '' ?>><?= $p['label'] ?></option>
 <?php endforeach ?>
-        </tbody>
-      </table>
+        </select>
+        <noscript><button type="submit">Show</button></noscript>
+      </form>
+
+      <div class="checks">
+<?php foreach ($sites as $url => $options): $state = $states[$url]; $last = $state['last_check']; $s = $stats[$url] ?? null; ?>
+        <article>
+          <div class="name">
+            <a href="<?= h(url(['site' => $url, 'period' => $period === 'day' ? null : $period])) ?>"><?= h(site_name($url)) ?></a>
+            <span class="muted"><?= h($url) ?></span>
+<?php if ($last && (!$last['success'] || $last['slow'])): ?>
+            <span class="<?= $last['success'] ? 'warning' : 'danger' ?> small"><?= h($last['error']) ?></span>
+<?php endif ?>
+          </div>
+          <dl class="metrics">
+            <div><dt>Uptime</dt><dd><?= percent($s ? (float) $s['uptime'] : null) ?></dd></div>
+            <div><dt>Mean</dt><dd><?= ms($s && $s['mean'] !== null ? (float) $s['mean'] : null) ?></dd></div>
+            <div><dt>Status</dt><dd><?= status_badge($state) ?></dd></div>
+          </dl>
+          <?= render_bars($buckets[$url] ?? [], $from, $bucketSeconds, $options['max_response_time'] ?? 1.0) ?>
+        </article>
+<?php endforeach ?>
+      </div>
 <?php endif ?>
 
-      <section>
+      <section class="notifications">
         <h2>Notifications</h2>
 <?php if (!$notifications): ?>
         <p class="muted">No notifications sent yet.</p>
 <?php else: ?>
-        <table>
+        <ul>
+<?php foreach ($notifications as $n): ?>
+          <li>
+            <span class="muted"><?= time_tag($n['sent_at']) ?></span>
+            <span><?= h($n['subject']) ?></span>
+            <span class="muted"><?= h($n['recipients']) ?></span>
+          </li>
+<?php endforeach ?>
+        </ul>
+<?php endif ?>
+      </section>
+<?php else: ?>
+      <nav class="back"><a href="<?= h(url(['period' => $period === 'day' ? null : $period])) ?>">← All checks</a></nav>
+
+      <hgroup class="hero">
+        <h1><?= h(site_name($site)) ?></h1>
+<?php if ($s): ?>
+        <p>This check has seen <?= percent((float) $s['uptime']) ?> uptime within the <?= strtolower(PERIODS[$period]['label']) ?>, and a mean response time of <?= ms($s['mean'] !== null ? (float) $s['mean'] : null) ?>.</p>
+<?php else: ?>
+        <p>No checks within the <?= strtolower(PERIODS[$period]['label']) ?> yet.</p>
+<?php endif ?>
+<?php if ($state['down']): ?>
+        <p class="danger">Down since <?= time_tag($state['down_since']) ?> · <?= $state['failures_in_a_row'] ?> failed <?= $state['failures_in_a_row'] === 1 ? 'check' : 'checks' ?> in a row</p>
+<?php endif ?>
+      </hgroup>
+
+      <figure class="histogram">
+        <div class="columns">
+<?php foreach ($histogram as $bin => $count): $binFrom = ($bin - 1) * $upper / HISTOGRAM_BINS; $binTo = $bin * $upper / HISTOGRAM_BINS; ?>
+          <i style="--h:<?= round($count / $histogramMax, 3) ?>;--t:<?= speed(($binFrom + $binTo) / 2, $scale) ?>" title="<?= h(duration($binFrom) . ' – ' . duration($binTo) . ": $count " . ($count === 1 ? 'check' : 'checks')) ?>"></i>
+<?php endforeach ?>
+        </div>
+        <div class="axis">
+<?php foreach (range(0, 4) as $tick): ?>
+          <span><?= duration($upper * $tick / 4) ?></span>
+<?php endforeach ?>
+        </div>
+      </figure>
+
+      <div class="toolbar">
+        <p class="muted small">
+          <?= h($options['method']) ?> ·
+          expects <?= h(implode(', ', $options['status_code'])) ?> ·
+          <?= $options['follow_redirects'] ? 'follows redirects' : 'no redirects' ?> ·
+          timeout <?= h((string) $options['timeout']) ?>s
+          <?= $options['max_response_time'] !== null ? '· max. response ' . ms($options['max_response_time']) : '' ?>
+        </p>
+        <form class="period" method="get">
+          <input type="hidden" name="site" value="<?= h($site) ?>" />
+          <select name="period" aria-label="Period" data-autosubmit>
+<?php foreach (PERIODS as $key => $p): ?>
+            <option value="<?= $key ?>"<?= $key === $period ? ' selected' : '' ?>><?= $p['label'] ?></option>
+<?php endforeach ?>
+          </select>
+          <noscript><button type="submit">Show</button></noscript>
+        </form>
+      </div>
+
+      <dl class="statsbar">
+        <div><dt>Uptime</dt><dd><?= percent($s ? (float) $s['uptime'] : null) ?></dd></div>
+        <div><dt>Mean response</dt><dd><?= ms($s && $s['mean'] !== null ? (float) $s['mean'] : null) ?></dd></div>
+        <div><dt>95th percentile</dt><dd><?= ms($s && $s['p95'] !== null ? (float) $s['p95'] : null) ?></dd></div>
+        <div><dt>Checks</dt><dd><?= number_format((int) ($s['checks'] ?? 0)) ?></dd></div>
+        <div><dt>Failures</dt><dd><?= number_format((int) ($s['failures'] ?? 0)) ?></dd></div>
+        <div><dt>Status</dt><dd><?= status_badge($state) ?></dd></div>
+      </dl>
+
+      <section class="days">
+        <h2>Past 7 days</h2>
+        <div class="grid">
+<?php foreach (range(0, 6) as $day): $dayStart = $gridFrom + $day * 86400; ?>
+          <div class="day">
+            <div class="hours">
+<?php foreach (range(0, 23) as $hour): $ts = $dayStart + $hour * 3600; $row = $hours[$ts] ?? null; ?>
+<?php if ($ts > time()): ?>
+              <i class="future"></i>
+<?php elseif ($row === null): ?>
+              <i title="<?= gmdate('D H:00', $ts) ?> UTC · no checks"></i>
+<?php else: ?>
+              <i class="<?= check_class($row) ?>" title="<?= h(gmdate('D H:00', $ts) . ' UTC · ' . ($row['success'] ? ($row['slow'] ? 'slow' : 'up') : 'failed') . ' · ' . $row['checks'] . ($row['checks'] === 1 ? ' check' : ' checks')) ?>"></i>
+<?php endif ?>
+<?php endforeach ?>
+            </div>
+            <span><?= gmdate('D', $dayStart) ?></span>
+          </div>
+<?php endforeach ?>
+        </div>
+      </section>
+
+      <section>
+        <nav class="filter">
+          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period])) ?>"<?= $failedOnly ? '' : ' aria-current="page"' ?>>All checks</a>
+          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period, 'failed' => 1])) ?>"<?= $failedOnly ? ' aria-current="page"' : '' ?>>Failed only</a>
+          <span class="muted"><?= number_format($total) ?> <?= $total === 1 ? 'check' : 'checks' ?></span>
+        </nav>
+
+<?php if (!$checks): ?>
+        <p class="muted">No checks yet.</p>
+<?php else: ?>
+        <table class="list">
           <thead>
-            <tr><th>Sent</th><th>Subject</th><th>Recipients</th></tr>
+            <tr>
+              <th>Checked</th>
+              <th>Result</th>
+              <th align="right">Status code</th>
+              <th align="right">Response</th>
+              <th>Error</th>
+            </tr>
           </thead>
           <tbody>
-<?php foreach ($notifications as $n): ?>
+<?php foreach ($checks as $c): ?>
             <tr>
-              <td><?= time_tag($n['sent_at']) ?></td>
-              <td><?= h($n['subject']) ?></td>
-              <td><?= h($n['recipients']) ?></td>
+              <td><?= time_tag($c['checked_at']) ?></td>
+              <td><?= $c['success'] ? ($c['slow'] ? '<span class="warning">Slow</span>' : '<span class="success">OK</span>') : '<span class="danger">Failed</span>' ?></td>
+              <td align="right"><?= h($c['status_code'] !== null ? (string) $c['status_code'] : '–') ?></td>
+              <td align="right"><?= ms($c['response_time'] !== null ? (float) $c['response_time'] : null) ?></td>
+              <td><?= h($c['error']) ?></td>
             </tr>
 <?php endforeach ?>
           </tbody>
         </table>
+<?php if ($pages > 1): ?>
+        <nav class="pagination">
+<?php if ($page > 1): ?>
+          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period, 'failed' => $failedOnly ? 1 : null, 'page' => $page - 1])) ?>">← Newer</a>
+<?php endif ?>
+          <span class="muted">Page <?= $page ?> of <?= $pages ?></span>
+<?php if ($page < $pages): ?>
+          <a href="<?= h(url(['site' => $site, 'period' => $period === 'day' ? null : $period, 'failed' => $failedOnly ? 1 : null, 'page' => $page + 1])) ?>">Older →</a>
+<?php endif ?>
+        </nav>
+<?php endif ?>
 <?php endif ?>
       </section>
-
-<?php else: $state = $states[$site]; $s = $stats[$site] ?? null; $options = $sites[$site]; ?>
-      <p><a href="<?= h(url()) ?>">← All sites</a></p>
-      <h2><?= status_badge($state) ?> <?= h($site) ?></h2>
-<?php if ($state['down']): ?>
-      <p class="danger">Down since <?= time_tag($state['down_since']) ?> · <?= $state['failures_in_a_row'] ?> failed checks in a row</p>
-<?php endif ?>
-
-      <dl class="stats">
-        <div><dt>Uptime 24 h</dt><dd><?= percent($s && $s['up_24h'] !== null ? (float) $s['up_24h'] : null) ?></dd></div>
-        <div><dt>Uptime 7 d</dt><dd><?= percent($s && $s['up_7d'] !== null ? (float) $s['up_7d'] : null) ?></dd></div>
-        <div><dt>Uptime 30 d</dt><dd><?= percent($s ? (float) $s['up_30d'] : null) ?></dd></div>
-        <div><dt>Avg. response 24 h</dt><dd><?= ms($s && $s['avg_response_24h'] !== null ? (float) $s['avg_response_24h'] : null) ?></dd></div>
-        <div><dt>Failures 24 h</dt><dd><?= (int) ($s['failures_24h'] ?? 0) ?></dd></div>
-      </dl>
-
-      <p class="muted small">
-        <?= h($options['method']) ?> ·
-        expects <?= h(implode(', ', $options['status_code'])) ?> ·
-        <?= $options['follow_redirects'] ? 'follows redirects' : 'no redirects' ?> ·
-        timeout <?= h((string) $options['timeout']) ?> s
-        <?= $options['max_response_time'] !== null ? '· max. response ' . ms($options['max_response_time']) : '' ?>
-      </p>
-
-      <nav class="filter">
-        <a href="<?= h(url(['site' => $site])) ?>"<?= $failedOnly ? '' : ' aria-current="page"' ?>>All checks</a>
-        <a href="<?= h(url(['site' => $site, 'failed' => 1])) ?>"<?= $failedOnly ? ' aria-current="page"' : '' ?>>Failed only</a>
-        <span class="muted"><?= number_format($total) ?> <?= $total === 1 ? 'check' : 'checks' ?></span>
-      </nav>
-
-<?php if (!$checks): ?>
-      <p class="muted">No checks yet.</p>
-<?php else: ?>
-      <table>
-        <thead>
-          <tr>
-            <th>Checked</th>
-            <th>Result</th>
-            <th align="right">Status code</th>
-            <th align="right">Response</th>
-            <th>Error</th>
-          </tr>
-        </thead>
-        <tbody>
-<?php foreach ($checks as $c): ?>
-          <tr>
-            <td><?= time_tag($c['checked_at']) ?></td>
-            <td><?= $c['success'] ? ($c['slow'] ? '<span class="warning">Slow</span>' : '<span class="success">OK</span>') : '<span class="danger">Failed</span>' ?></td>
-            <td align="right"><?= h($c['status_code'] !== null ? (string) $c['status_code'] : '–') ?></td>
-            <td align="right"><?= ms($c['response_time'] !== null ? (float) $c['response_time'] : null) ?></td>
-            <td><?= h($c['error']) ?></td>
-          </tr>
-<?php endforeach ?>
-        </tbody>
-      </table>
-<?php if ($pages > 1): ?>
-      <nav class="pagination">
-<?php if ($page > 1): ?>
-        <a href="<?= h(url(['site' => $site, 'failed' => $failedOnly ? 1 : null, 'page' => $page - 1])) ?>">← Newer</a>
-<?php endif ?>
-        <span class="muted">Page <?= $page ?> of <?= $pages ?></span>
-<?php if ($page < $pages): ?>
-        <a href="<?= h(url(['site' => $site, 'failed' => $failedOnly ? 1 : null, 'page' => $page + 1])) ?>">Older →</a>
-<?php endif ?>
-      </nav>
-<?php endif ?>
-<?php endif ?>
-<?php endif ?>
 <?php endif ?>
     </main>
+
+<?php if ($loggedIn): ?>
+    <footer class="muted small">
+<?php if ($lastJob): ?>
+      Last run <?= time_tag($lastJob['started_at']) ?>
+<?php if ($lastJob['status'] !== 'finished'): ?>
+      · <span class="<?= $lastJob['status'] === 'running' ? '' : 'danger' ?>"><?= h($lastJob['status']) ?></span><?= $lastJob['error'] ? ': ' . h($lastJob['error']) : '' ?>
+<?php endif ?>
+<?php else: ?>
+      The cronjob has not run yet.
+<?php endif ?>
+      · <b>UPTIME</b>CHECK
+    </footer>
+<?php endif ?>
   </body>
 </html>

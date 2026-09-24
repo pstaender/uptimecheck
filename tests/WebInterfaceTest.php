@@ -126,7 +126,45 @@ describe('overview', function () {
         $browser = new Browser();
         $browser->login();
 
-        expect($browser->get()['body'])->toContain('75 %');
+        expect($browser->get()['body'])->toContain('75%');
+    });
+
+    it('calculates the uptime for the selected period', function (string $period, string $uptime) {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        Env::migrate();
+        Env::insertCheck(Env::site('a'), true, gmdate('c', time() - 3600));
+        Env::insertCheck(Env::site('a'), false, gmdate('c', time() - 3 * 86400));
+        Env::insertCheck(Env::site('a'), false, gmdate('c', time() - 20 * 86400));
+        $browser = new Browser();
+        $browser->login();
+
+        expect($browser->get('/index.php', ['period' => $period])['body'])->toContain(">$uptime<")->toContain('selected>Past ' . $period);
+    })->with([
+        ['day', '100%'],
+        ['week', '50%'],
+        ['month', '33.33%'],
+    ]);
+
+    it('falls back to the past day for an unknown period', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        $browser = new Browser();
+        $browser->login();
+
+        expect($browser->get('/index.php', ['period' => 'year'])['body'])->toContain('selected>Past day');
+    });
+
+    it('shows a bar per time slot with failures in the failure color', function () {
+        Env::setSite('a', ['status' => 500]);
+        Env::config(['sites' => [Env::site('a') => []]]);
+        Env::cron();
+        $browser = new Browser();
+        $browser->login();
+
+        $body = $browser->get()['body'];
+        preg_match('#<span class="bars">(.*?)</span>#s', $body, $bars);
+
+        expect(substr_count($bars[1], '<i'))->toBe(60)
+            ->and(substr_count($bars[1], 'class="fail"'))->toBe(1);
     });
 
     it('lists sent notifications', function () {
@@ -175,6 +213,35 @@ describe('site details', function () {
             ->toContain('Down since')
             ->toContain('expects 200')
             ->not->toContain(Env::site('b'));
+    });
+
+    it('shows the response time histogram, stats and the past 7 days', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        Env::cron();
+        Env::setSite('a', ['status' => 500]);
+        Env::cron();
+        $browser = new Browser();
+        $browser->login();
+
+        $body = $browser->get('/index.php', ['site' => Env::site('a')])['body'];
+        preg_match('#<div class="hours">(.*?)</div>#s', $body, $today);
+
+        expect($body)->toContain('This check has seen <span class="danger">50%</span> uptime within the past day')
+            ->toContain('<dt>Checks</dt><dd>2</dd>')
+            ->toContain('<dt>Failures</dt><dd>1</dd>')
+            ->and(substr_count($body, '<div class="hours">'))->toBe(7)
+            ->and(substr_count($body, 'class="fail" title="' . gmdate('D H:00')))->toBe(1);
+        preg_match('#<div class="columns">(.*?)</div>#s', $body, $histogram);
+        expect(substr_count($histogram[1], '<i'))->toBe(60);
+    });
+
+    it('explains when there are no checks in the period', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        $browser = new Browser();
+        $browser->login();
+
+        expect($browser->get('/index.php', ['site' => Env::site('a'), 'period' => 'week'])['body'])
+            ->toContain('No checks within the past week yet.');
     });
 
     it('filters failed checks', function () {
