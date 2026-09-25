@@ -312,7 +312,7 @@ describe('notifications', function () {
     it('links the sites to their detail view when interface_url is configured', function () {
         Env::setSite('a', ['status' => 500]);
         Env::config(['interface_url' => 'https://uptime.example.com/', 'sites' => [Env::site('a') => []]]);
-        $detailUrl = 'https://uptime.example.com/?' . http_build_query(['site' => Env::site('a')]);
+        $detailUrl = 'https://uptime.example.com/?' . http_build_query(['site' => Env::site('a'), 'view' => 'time']);
 
         Env::cron();
         Env::setSite('a', []);
