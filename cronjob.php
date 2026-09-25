@@ -12,7 +12,14 @@ require __DIR__ . '/lib.php';
 const LOCK_KEY = 7304219;
 
 $verbose = in_array('--verbose', $argv, true) || in_array('-v', $argv, true);
-$testMail = in_array('--test-mail', $argv, true);
+$testMail = null;
+foreach ($argv as $arg) {
+    if ($arg === '--test-mail') {
+        $testMail = 'plain';
+    } elseif (str_starts_with($arg, '--test-mail=')) {
+        $testMail = substr($arg, strlen('--test-mail='));
+    }
+}
 
 function out(string $message): void
 {
@@ -28,20 +35,27 @@ function fail(string $message): never
     exit(1);
 }
 
-try {
-    $pdo = db();
-} catch (Throwable $e) {
-    fail('Database connection failed: ' . $e->getMessage());
-}
-
-if ($testMail) {
+if ($testMail !== null) {
+    if (!in_array($testMail, ['plain', 'down', 'up'], true)) {
+        fail("Unknown --test-mail=$testMail, use --test-mail, --test-mail=down or --test-mail=up");
+    }
     try {
-        send_mail('[uptime] Test mail', "This is a test mail from uptimecheck.\n", '<p>This is a test mail from uptimecheck.</p>');
-        echo 'Test mail sent to ', implode(', ', recipients()), PHP_EOL;
+        if ($testMail === 'plain') {
+            send_mail('[uptime] Test mail', "This is a test mail from uptimecheck.\n", '<p>This is a test mail from uptimecheck.</p>');
+        } else {
+            send_notification(sample_notification($testMail === 'down'), '[TEST] ');
+        }
+        echo 'Test mail', $testMail === 'plain' ? '' : " ($testMail)", ' sent to ', implode(', ', recipients()), PHP_EOL;
         exit(0);
     } catch (Throwable $e) {
         fail('Sending test mail failed: ' . $e->getMessage());
     }
+}
+
+try {
+    $pdo = db();
+} catch (Throwable $e) {
+    fail('Database connection failed: ' . $e->getMessage());
 }
 
 // The advisory lock is held for the lifetime of the db connection, so it is
@@ -202,27 +216,60 @@ function notify(PDO $pdo): void
             'error' => $check['error'],
         ];
     }
-    $data = [
+    $subject = send_notification([
         'downSites' => $downSites,
         'newlyDown' => array_values(array_diff($down, $lastDown)),
         'recovered' => array_values(array_diff($lastDown, $down)),
         'removed' => $removed,
         'siteCount' => count($states),
         'generatedAt' => gmdate('Y-m-d H:i') . ' UTC',
-    ];
+    ]);
+    $pdo->prepare('INSERT INTO notifications (down_sites, subject, recipients) VALUES (?, ?, ?)')
+        ->execute([json_encode($down), $subject, implode(', ', recipients())]);
+    out("Notification sent: $subject");
+}
 
-    $subject = $down
-        ? sprintf('[uptime] %d of %d %s down: %s', count($down), count($states), count($states) === 1 ? 'site' : 'sites', implode(', ', array_map(fn($s) => preg_replace('#^https?://#', '', $s), $down)))
-        : '[uptime] All sites are back to normal';
+/**
+ * Sends the notification mail (html and plain text) and returns its subject.
+ */
+function send_notification(array $data, string $subjectPrefix = ''): string
+{
+    $down = array_column($data['downSites'], 'site');
+    $subject = $subjectPrefix . ($down
+        ? sprintf('[uptime] %d of %d %s down: %s', count($down), $data['siteCount'], $data['siteCount'] === 1 ? 'site' : 'sites', implode(', ', array_map(fn($s) => preg_replace('#^https?://#', '', $s), $down)))
+        : '[uptime] All sites are back to normal');
 
     send_mail(
         $subject,
         render(__DIR__ . '/email_plain_text_template.php', $data),
         render(__DIR__ . '/email_template.php', $data),
     );
-    $pdo->prepare('INSERT INTO notifications (down_sites, subject, recipients) VALUES (?, ?, ?)')
-        ->execute([json_encode($down), $subject, implode(', ', recipients())]);
-    out("Notification sent: $subject");
+    return $subject;
+}
+
+/**
+ * Notification data for test mails: up to two of the configured sites are down (or back up again).
+ */
+function sample_notification(bool $down): array
+{
+    $sites = array_keys(sites()) ?: ['https://example.com', 'https://example.org'];
+    $affected = array_slice($sites, 0, 2);
+    $downSites = array_map(fn($site) => [
+        'site' => $site,
+        'down_since' => gmdate('Y-m-d H:i:s', time() - 900) . '+00',
+        'failures' => tolerated_failures(),
+        'status_code' => 503,
+        'error' => 'Unexpected status code 503',
+    ], $affected);
+
+    return [
+        'downSites' => $down ? $downSites : [],
+        'newlyDown' => $down ? $affected : [],
+        'recovered' => $down ? [] : $affected,
+        'removed' => [],
+        'siteCount' => count($sites),
+        'generatedAt' => gmdate('Y-m-d H:i') . ' UTC',
+    ];
 }
 
 function render(string $template, array $data): string

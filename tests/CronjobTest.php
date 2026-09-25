@@ -398,6 +398,48 @@ describe('notifications', function () {
             ->and(subjects())->toBe(['[uptime] Test mail']);
     });
 
+    it('sends a test mail of a down notification with --test-mail=down', function () {
+        Env::config(['sites' => [Env::site('a') => [], Env::site('b') => [], Env::site('c') => []]]);
+
+        $result = Env::cron('--test-mail=down');
+
+        [$mail] = Env::mails();
+        expect($result['exit'])->toBe(0)
+            ->and($result['out'])->toContain('Test mail (down) sent to ops@example.com')
+            ->and($mail['subject'])->toStartWith('[TEST] [uptime] 2 of 3 sites down:')
+            ->and($mail['text'])->toContain(Env::site('a') . ' [NEW]')->toContain(Env::site('b') . ' [NEW]')
+            ->and($mail['html'])->toContain('Unexpected status code 503')
+            ->and(Env::requests('a'))->toBeEmpty();
+    });
+
+    it('sends a test mail of a back to normal notification with --test-mail=up', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+
+        $result = Env::cron('--test-mail=up');
+
+        [$mail] = Env::mails();
+        expect($result['exit'])->toBe(0)
+            ->and($result['out'])->toContain('Test mail (up) sent to ops@example.com')
+            ->and($mail['subject'])->toBe('[TEST] [uptime] All sites are back to normal')
+            ->and($mail['text'])->toContain("Back up:\n- " . Env::site('a'));
+    });
+
+    it('sends test mails without a database connection and does not record them', function () {
+        Env::config(['db' => ['host' => '127.0.0.1', 'port' => 1, 'database' => 'x', 'username' => 'x', 'password' => '']]);
+
+        expect(Env::cron('--test-mail=down')['exit'])->toBe(0)
+            ->and(Env::mails())->toHaveCount(1)
+            ->and(Env::mails()[0]['text'])->toContain('https://example.com');
+    });
+
+    it('rejects unknown test mail types', function () {
+        $result = Env::cron('--test-mail=sideways');
+
+        expect($result['exit'])->toBe(1)
+            ->and($result['err'])->toContain('Unknown --test-mail=sideways')
+            ->and(Env::mails())->toBeEmpty();
+    });
+
     it('sends to all configured recipients', function () {
         Env::config(['email' => [
             'from' => 'uptime@example.com',
