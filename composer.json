@@ -3,7 +3,7 @@
     "description": "Very simple uptime check for shared hosting",
     "type": "project",
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "require": {
         "php": ">=8.3",
         "ext-curl": "*",

@@ -14,6 +14,7 @@ return [
             "follow_redirects" => true,             // overrides the global follow_redirects
             "timeout" => 10,                        // overrides the global timeout
             "max_response_time" => 2,               // overrides the global max_response_time
+            "tolerated_failures_in_a_row" => 3,     // overrides the global tolerated_failures_in_a_row
         ],
     ],
     // a site is marked down (and a notification is sent) after this many failed checks in a row;

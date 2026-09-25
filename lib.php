@@ -126,7 +126,7 @@ function migrate(PDO $pdo): array
 /**
  * Returns all configured sites with their options merged with the defaults.
  *
- * @return array<string, array{method: string, headers: array, body: ?string, status_code: int[], follow_redirects: bool, timeout: float, max_response_time: ?float}>
+ * @return array<string, array{method: string, headers: array, body: ?string, status_code: int[], follow_redirects: bool, timeout: float, max_response_time: ?float, tolerated_failures_in_a_row: int}>
  */
 function sites(): array
 {
@@ -143,13 +143,14 @@ function sites(): array
             'max_response_time' => isset($options['max_response_time']) || isset($config['max_response_time'])
                 ? (float) ($options['max_response_time'] ?? $config['max_response_time'])
                 : null,
+            'tolerated_failures_in_a_row' => max(1, (int) ($options['tolerated_failures_in_a_row'] ?? tolerated_failures())),
         ];
     }
     return $sites;
 }
 
 /**
- * Number of failed checks in a row after which a site is down (at least 1).
+ * Number of failed checks in a row after which a site is down (at least 1), unless a site sets its own value.
  */
 function tolerated_failures(): int
 {
@@ -158,17 +159,17 @@ function tolerated_failures(): int
 
 /**
  * Determines the current state of every configured site from the latest checks.
- * A site is down when `tolerated_failures_in_a_row` checks in a row failed.
+ * A site is down when `tolerated_failures_in_a_row` (of the site or the global one) checks in a row failed.
  *
  * @return array<string, array{down: bool, failures_in_a_row: int, last_check: ?array, down_since: ?string}>
  */
 function site_states(PDO $pdo): array
 {
-    $sites = array_keys(sites());
+    $limits = array_map(fn($options) => $options['tolerated_failures_in_a_row'], sites());
+    $sites = array_keys($limits);
     if (!$sites) {
         return [];
     }
-    $limit = tolerated_failures();
     $placeholders = implode(',', array_fill(0, count($sites), '?'));
     $stmt = $pdo->prepare("
         SELECT * FROM (
@@ -179,7 +180,7 @@ function site_states(PDO $pdo): array
         WHERE rn <= ?
         ORDER BY site, rn
     ");
-    $stmt->execute([...$sites, $limit]);
+    $stmt->execute([...$sites, max($limits)]);
     $recent = [];
     foreach ($stmt as $row) {
         $recent[$row['site']][] = $row;
@@ -195,7 +196,7 @@ function site_states(PDO $pdo): array
             }
             $failures++;
         }
-        $down = $failures >= $limit;
+        $down = $failures >= $limits[$site];
         $states[$site] = [
             'down' => $down,
             'failures_in_a_row' => $failures,

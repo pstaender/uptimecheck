@@ -259,6 +259,31 @@ describe('notifications', function () {
             ->and(Env::mails()[0]['text'])->toContain('3 in a row');
     });
 
+    it('uses tolerated_failures_in_a_row of the site over the global one', function () {
+        Env::setSite('strict', ['status' => 500]);
+        Env::setSite('lenient', ['status' => 500]);
+        Env::setSite('default', ['status' => 500]);
+        Env::config([
+            'tolerated_failures_in_a_row' => 2,
+            'sites' => [
+                Env::site('strict') => ['tolerated_failures_in_a_row' => 1],
+                Env::site('lenient') => ['tolerated_failures_in_a_row' => 3],
+                Env::site('default') => [],
+            ],
+        ]);
+
+        Env::cron();
+        Env::cron();
+        Env::cron();
+
+        $mails = Env::mails();
+        expect($mails)->toHaveCount(3)
+            ->and($mails[0]['text'])->toContain(Env::site('strict') . ' [NEW]')->not->toContain(Env::site('default'))->not->toContain(Env::site('lenient'))
+            ->and($mails[1]['text'])->toContain(Env::site('default') . ' [NEW]')->not->toContain(Env::site('lenient'))
+            ->and($mails[2]['text'])->toContain(Env::site('lenient') . ' [NEW]')
+            ->and($mails[2]['subject'])->toStartWith('[uptime] 3 of 3 sites down');
+    });
+
     it('resets the failure counter after a successful check', function () {
         Env::config(['tolerated_failures_in_a_row' => 2, 'sites' => [Env::site('flaky') => []]]);
 
