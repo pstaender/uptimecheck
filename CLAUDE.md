@@ -62,7 +62,7 @@ When something in up and down sites has changed since the last notification, sen
 ## Development
 
 * `composer serve` starts the web interface on http://localhost:8000
-* `composer cron` runs the checks once (verbose), `composer test-mail` sends a test mail (both accept `-- --host=<hostname>`)
+* `composer cron` runs the checks once (verbose), `composer test-mail` sends a test mail, `composer test-mail-down` / `composer test-mail-up` send the notification mails for down / back up sites with sample data (`cronjob.php --test-mail=down|up`, all accept `-- --host=<hostname>`)
 * `composer hash-password -- 'your-password'` prints the hash for `auth.password`
 * `composer build` creates `dist/uptimecheck-<version>.zip` with the files for the web hosting (list in `build.php`, version from `composer.json`)
 * `composer test` runs the pest tests in `tests/`. They need a local postgres (database `uptime_test` is created if missing, see `tests/Support/Env.php` for the `UPTIMECHECK_TEST_DB_*` env vars). The tests run `cronjob.php` and the web interface as real processes against a fixture http server (`tests/Support/router.php`) and a fake smtp server (`tests/Support/smtp_server.php`).

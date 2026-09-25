@@ -21,6 +21,8 @@
         ],
         "cron": "php cronjob.php --verbose",
         "test-mail": "php cronjob.php --test-mail",
+        "test-mail-down": "php cronjob.php --test-mail=down",
+        "test-mail-up": "php cronjob.php --test-mail=up",
         "hash-password": "php -r 'echo password_hash($argv[1] ?? \"\", PASSWORD_DEFAULT), PHP_EOL;'",
         "test": "pest",
         "build": "php build.php"
@@ -29,6 +31,8 @@
         "serve": "Starts the web interface on http://localhost:8000 for development",
         "cron": "Runs the checks once, printing every result",
         "test-mail": "Sends a test notification mail to the configured recipients",
+        "test-mail-down": "Sends a test of the notification mail for down sites",
+        "test-mail-up": "Sends a test of the notification mail for sites back up",
         "hash-password": "Prints a password hash for auth.password: composer hash-password -- 'your-password'",
         "test": "Runs the test suite (needs a local postgres)",
         "build": "Creates dist/uptimecheck-<version>.zip with the files for the web hosting"
