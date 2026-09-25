@@ -226,7 +226,7 @@ function site_states(PDO $pdo): array
  */
 function detail_url(string $interfaceUrl, string $site): string
 {
-    return $interfaceUrl . (str_contains($interfaceUrl, '?') ? '&' : '?') . http_build_query(['site' => $site]);
+    return $interfaceUrl . (str_contains($interfaceUrl, '?') ? '&' : '?') . http_build_query(['site' => $site, 'view' => 'time']);
 }
 
 function h(?string $value): string
