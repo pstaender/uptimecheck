@@ -1,5 +1,7 @@
 # UptimeCheck
 
+[![Tests](https://github.com/pstaender/uptimecheck/actions/workflows/tests.yml/badge.svg)](https://github.com/pstaender/uptimecheck/actions/workflows/tests.yml)
+
 A free, lightweight PHP script that checks whether your websites are up and emails you when one goes down. It has no Composer dependencies and is built for shared hosting, so you can run it as a cronjob.
 
 > **Note:** This project is vibe-coded.
