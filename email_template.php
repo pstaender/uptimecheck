@@ -12,9 +12,17 @@ if (PHP_SAPI !== 'cli') {
  * @var array $removed     sites that were down, but got removed from the config
  * @var int $siteCount
  * @var string $generatedAt
+ * @var ?string $interfaceUrl  url of the web interface (config interface_url), to link the sites to their detail view
  */
 $e = fn(?string $v): string => htmlspecialchars((string) $v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 $name = fn(string $url): string => $e(preg_replace('#^https?://#', '', $url));
+$nameLink = function (string $site) use ($e, $name, $interfaceUrl): string {
+    $style = 'color: #1d1f23; font-weight: 500; text-decoration: none;';
+    if (!$interfaceUrl) {
+        return "<span style=\"$style\">{$name($site)}</span>";
+    }
+    return "<a href=\"{$e(detail_url($interfaceUrl, $site))}\" style=\"$style\">{$name($site)}</a>";
+};
 
 $text = '#1d1f23';
 $muted = '#8a94a6';
@@ -74,9 +82,9 @@ $changes = array_filter([
 <?php foreach ($downSites as $site): ?>
                 <tr>
                   <td style="<?= $row ?>">
-                    <a href="<?= $e($site['site']) ?>" style="color: <?= $text ?>; font-weight: 500; text-decoration: none;"><?= $name($site['site']) ?></a>
+                    <?= $nameLink($site['site']) ?>
                     <?= in_array($site['site'], $newlyDown, true) ? $badge($red, 'new') : '' ?><br>
-                    <span style="font-size: 13px; font-weight: 300; color: <?= $muted ?>;"><?= $e($site['site']) ?></span><br>
+                    <a href="<?= $e($site['site']) ?>" style="font-size: 13px; font-weight: 300; text-decoration: none; color: <?= $muted ?>;"><?= $e($site['site']) ?></a><br>
                     <span style="font-size: 13px; color: <?= $red ?>;"><?= $e($site['error'] ?? '') ?></span>
                   </td>
                   <td width="120" style="<?= $row ?> padding-left: 16px;">
@@ -102,8 +110,8 @@ $changes = array_filter([
 <?php foreach ($recovered as $site): ?>
                 <tr>
                   <td style="<?= $row ?>">
-                    <a href="<?= $e($site) ?>" style="color: <?= $text ?>; font-weight: 500; text-decoration: none;"><?= $name($site) ?></a><br>
-                    <span style="font-size: 13px; font-weight: 300; color: <?= $muted ?>;"><?= $e($site) ?></span>
+                    <?= $nameLink($site) ?><br>
+                    <a href="<?= $e($site) ?>" style="font-size: 13px; font-weight: 300; text-decoration: none; color: <?= $muted ?>;"><?= $e($site) ?></a>
                   </td>
                   <td width="80" align="right" style="<?= $row ?>"><?= $badge($green, 'up') ?></td>
                 </tr>

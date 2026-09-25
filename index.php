@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['user'] = $auth['user'];
                 // a login is only valid for the config it was made with (see config.<hostname>.php)
                 $_SESSION['config'] = config_file();
-                header('Location: ' . url());
+                header('Location: ' . url($_GET));
                 exit;
             }
             sleep(1);

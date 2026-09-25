@@ -234,6 +234,7 @@ function notify(PDO $pdo): void
  */
 function send_notification(array $data, string $subjectPrefix = ''): string
 {
+    $data['interfaceUrl'] = config()['interface_url'] ?? null;
     $down = array_column($data['downSites'], 'site');
     $subject = $subjectPrefix . ($down
         ? sprintf('[uptime] %d of %d %s down: %s', count($down), $data['siteCount'], $data['siteCount'] === 1 ? 'site' : 'sites', implode(', ', array_map(fn($s) => preg_replace('#^https?://#', '', $s), $down)))

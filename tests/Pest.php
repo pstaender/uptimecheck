@@ -20,6 +20,12 @@ function h_url(array $params): string
     return htmlspecialchars('/index.php?' . http_build_query($params), ENT_QUOTES);
 }
 
+/** A site as it is named in the plain text mails: without scheme and trailing slash. */
+function plain_name(string $url): string
+{
+    return rtrim(preg_replace('#^https?://#', '', $url), '/');
+}
+
 /** Subjects of all mails sent so far. */
 function subjects(): array
 {

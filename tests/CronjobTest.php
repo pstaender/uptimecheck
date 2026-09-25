@@ -242,7 +242,7 @@ describe('notifications', function () {
         $mail = Env::mails()[0];
         expect($mail['headers']['to'])->toBe('ops@example.com')
             ->and($mail['headers']['from'])->toBe('uptime@example.com')
-            ->and($mail['text'])->toContain(Env::site('down'))->toContain('Unexpected status code 503')
+            ->and($mail['text'])->toContain(plain_name(Env::site('down')))->toContain('Unexpected status code 503')
             ->and($mail['html'])->toContain(htmlspecialchars(Env::site('down')))->toContain('Unexpected status code 503');
     });
 
@@ -278,9 +278,9 @@ describe('notifications', function () {
 
         $mails = Env::mails();
         expect($mails)->toHaveCount(3)
-            ->and($mails[0]['text'])->toContain(Env::site('strict') . ' [NEW]')->not->toContain(Env::site('default'))->not->toContain(Env::site('lenient'))
-            ->and($mails[1]['text'])->toContain(Env::site('default') . ' [NEW]')->not->toContain(Env::site('lenient'))
-            ->and($mails[2]['text'])->toContain(Env::site('lenient') . ' [NEW]')
+            ->and($mails[0]['text'])->toContain(plain_name(Env::site('strict')) . ' [NEW]')->not->toContain(plain_name(Env::site('default')))->not->toContain(plain_name(Env::site('lenient')))
+            ->and($mails[1]['text'])->toContain(plain_name(Env::site('default')) . ' [NEW]')->not->toContain(plain_name(Env::site('lenient')))
+            ->and($mails[2]['text'])->toContain(plain_name(Env::site('lenient')) . ' [NEW]')
             ->and($mails[2]['subject'])->toStartWith('[uptime] 3 of 3 sites down');
     });
 
@@ -306,7 +306,33 @@ describe('notifications', function () {
 
         expect(Env::mails())->toHaveCount(1)
             ->and(subjects()[0])->toStartWith('[uptime] 2 of 3 sites down:')
-            ->and(Env::mails()[0]['text'])->toContain(Env::site('a'))->toContain(Env::site('b'));
+            ->and(Env::mails()[0]['text'])->toContain(plain_name(Env::site('a')))->toContain(plain_name(Env::site('b')));
+    });
+
+    it('links the sites to their detail view when interface_url is configured', function () {
+        Env::setSite('a', ['status' => 500]);
+        Env::config(['interface_url' => 'https://uptime.example.com/', 'sites' => [Env::site('a') => []]]);
+        $detailUrl = 'https://uptime.example.com/?' . http_build_query(['site' => Env::site('a')]);
+
+        Env::cron();
+        Env::setSite('a', []);
+        Env::cron();
+
+        [$down, $up] = Env::mails();
+        expect($down['html'])->toContain('href="' . htmlspecialchars($detailUrl) . '"')
+            ->and($down['text'])->toContain('* [' . plain_name(Env::site('a')) . "]($detailUrl) [NEW]")
+            ->and($up['html'])->toContain('href="' . htmlspecialchars($detailUrl) . '"')
+            ->and($up['text'])->toContain("Back up:\n* [" . plain_name(Env::site('a')) . "]($detailUrl)");
+    });
+
+    it('does not link the sites without interface_url', function () {
+        Env::setSite('a', ['status' => 500]);
+        Env::config(['sites' => [Env::site('a') => []]]);
+
+        Env::cron();
+
+        expect(Env::mails()[0]['html'])->not->toContain('?site=')
+            ->and(Env::mails()[0]['text'])->not->toContain('](');
     });
 
     it('does not notify again while nothing changes', function () {
@@ -331,8 +357,8 @@ describe('notifications', function () {
 
         $mails = Env::mails();
         expect($mails)->toHaveCount(2)
-            ->and($mails[1]['text'])->toContain(Env::site('b') . ' [NEW]')
-            ->and($mails[1]['text'])->not->toContain(Env::site('a') . ' [NEW]');
+            ->and($mails[1]['text'])->toContain(plain_name(Env::site('b')) . ' [NEW]')
+            ->and($mails[1]['text'])->not->toContain(plain_name(Env::site('a')) . ' [NEW]');
     });
 
     it('notifies about recovered sites while others are still down', function () {
@@ -346,7 +372,7 @@ describe('notifications', function () {
 
         $mail = Env::mails()[1];
         expect($mail['subject'])->toStartWith('[uptime] 1 of 2 sites down:')
-            ->and($mail['text'])->toContain("Back up:\n- " . Env::site('a'));
+            ->and($mail['text'])->toContain("Back up:\n* " . plain_name(Env::site('a')));
     });
 
     it('notifies when everything is back to normal', function () {
@@ -382,7 +408,7 @@ describe('notifications', function () {
 
         expect(Env::mails())->toHaveCount(2)
             ->and(subjects()[1])->toBe('[uptime] All sites are back to normal')
-            ->and(Env::mails()[1]['text'])->toContain("Removed from monitoring:\n- " . Env::site('a'))
+            ->and(Env::mails()[1]['text'])->toContain("Removed from monitoring:\n* " . Env::site('a'))
             ->and(Env::mails()[1]['html'])->toContain('Removed from monitoring');
     });
 
@@ -432,7 +458,7 @@ describe('notifications', function () {
         expect($result['exit'])->toBe(0)
             ->and($result['out'])->toContain('Test mail (down) sent to ops@example.com')
             ->and($mail['subject'])->toStartWith('[TEST] [uptime] 2 of 3 sites down:')
-            ->and($mail['text'])->toContain(Env::site('a') . ' [NEW]')->toContain(Env::site('b') . ' [NEW]')
+            ->and($mail['text'])->toContain(plain_name(Env::site('a')) . ' [NEW]')->toContain(plain_name(Env::site('b')) . ' [NEW]')
             ->and($mail['html'])->toContain('Unexpected status code 503')
             ->and(Env::requests('a'))->toBeEmpty();
     });
@@ -446,7 +472,7 @@ describe('notifications', function () {
         expect($result['exit'])->toBe(0)
             ->and($result['out'])->toContain('Test mail (up) sent to ops@example.com')
             ->and($mail['subject'])->toBe('[TEST] [uptime] All sites are back to normal')
-            ->and($mail['text'])->toContain("Back up:\n- " . Env::site('a'));
+            ->and($mail['text'])->toContain("Back up:\n* " . plain_name(Env::site('a')));
     });
 
     it('sends test mails without a database connection and does not record them', function () {
@@ -454,7 +480,7 @@ describe('notifications', function () {
 
         expect(Env::cron('--test-mail=down')['exit'])->toBe(0)
             ->and(Env::mails())->toHaveCount(1)
-            ->and(Env::mails()[0]['text'])->toContain('https://example.com');
+            ->and(Env::mails()[0]['text'])->toContain('* example.com');
     });
 
     it('rejects unknown test mail types', function () {

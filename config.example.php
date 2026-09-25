@@ -29,6 +29,8 @@ return [
     // by default a slow response is a failed check (a slow page is not really "up" for its users);
     // set to true to still record slow responses, but count them as up and never notify about them
     "dont_send_notifications_on_slow_pages" => false,
+    // url of the web interface (index.php), used to link the sites in the notification mails to their detail view
+    "interface_url" => "https://uptime.example.com/",
     // checks older than this are deleted
     "retention_days" => 90,
     "email" => [

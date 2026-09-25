@@ -24,6 +24,17 @@ describe('authentication', function () {
             ->and($browser->get()['body'])->toContain('Log out')->not->toContain('name="password"');
     });
 
+    it('opens the requested page after the login', function () {
+        Env::config(['sites' => [Env::site('a') => []]]);
+        $browser = new Browser();
+        $query = ['site' => Env::site('a')];
+        preg_match('/name="csrf" value="([a-f0-9]+)"/', $browser->get('/index.php', $query)['body'], $csrf);
+
+        $response = $browser->post(['csrf' => $csrf[1], 'action' => 'login', 'user' => 'admin', 'password' => Env::PASSWORD], '/index.php?' . http_build_query($query));
+
+        expect($response['location'])->toBe('/index.php?' . http_build_query($query));
+    });
+
     it('rejects a wrong password', function () {
         $browser = new Browser();
 

@@ -221,6 +221,14 @@ function site_states(PDO $pdo): array
     return $states;
 }
 
+/**
+ * Link to the detail view of a site in the web interface.
+ */
+function detail_url(string $interfaceUrl, string $site): string
+{
+    return $interfaceUrl . (str_contains($interfaceUrl, '?') ? '&' : '?') . http_build_query(['site' => $site]);
+}
+
 function h(?string $value): string
 {
     return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
